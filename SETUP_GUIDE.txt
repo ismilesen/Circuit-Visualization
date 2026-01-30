@@ -65,15 +65,13 @@ circuit-visualizer/
 
 STEP 1: Clone the Repository
 --------------------------------------------------------------------------------
-    git clone <repository-url>
-    cd circuit-visualizer
+    git clone --recurse-submodules https://github.com/ismilesen/Circuit-Visualization.git
+    cd Circuit-Visualization
 
+NOTE: The --recurse-submodules flag automatically clones godot-cpp.
 
-STEP 2: Clone godot-cpp (if not included)
---------------------------------------------------------------------------------
-If the godot-cpp folder is empty or missing:
-
-    git clone https://github.com/godotengine/godot-cpp.git --branch godot-4.3-stable --recurse-submodules
+If you already cloned without the flag, run:
+    git submodule update --init --recursive
 
 
 STEP 3: Download ngspice DLL
