@@ -1,5 +1,6 @@
-# Godot-cpp (clone separately - see SETUP_GUIDE.txt)
-godot-cpp/
+# Godot-cpp build artifacts
+godot-cpp/bin/
+godot-cpp/gen/
 
 # Build output
 project/bin/*.dll
