@@ -76,7 +76,7 @@ If you already cloned without the flag, run:
 
 STEP 3: Download ngspice DLL
 --------------------------------------------------------------------------------
-1. Go to: https://sourceforge.net/projects/ngspice/files/ng-spice-rework/43/
+1. Go to: https://sourceforge.net/projects/ngspice/files/ng-spice-rework/45.2/ngspice-45.2_dll_64.7z/download
 
 2. Download: ngspice-43_dll_64.zip (NOT the regular zip)
 
