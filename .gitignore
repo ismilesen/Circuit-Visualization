@@ -1,0 +1,37 @@
+# Godot-cpp (clone separately - see SETUP_GUIDE.txt)
+godot-cpp/
+
+# Build output
+project/bin/*.dll
+project/bin/*.lib
+project/bin/*.exp
+project/bin/*.pdb
+*.obj
+*.o
+
+# ngspice binaries (download separately - see SETUP_GUIDE.txt)
+ngspice/ngspice.dll
+project/bin/ngspice.dll
+
+# SCons cache
+.sconsign.dblite
+.sconf_temp/
+*.pyc
+
+# Godot editor files
+.godot/
+*.import
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak

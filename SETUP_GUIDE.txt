@@ -1,0 +1,238 @@
+================================================================================
+         CIRCUIT SIMULATION VISUALIZER - SETUP GUIDE
+================================================================================
+
+A Godot 4 + ngspice circuit simulator for CSE course visualization.
+
+
+================================================================================
+                           PREREQUISITES
+================================================================================
+
+Install these before starting:
+
+1. PYTHON (3.10+)
+   - Download: https://www.python.org/downloads/
+   - IMPORTANT: Check "Add Python to PATH" during installation
+   - Verify: python --version
+
+2. GIT
+   - Download: https://git-scm.com/downloads
+   - Verify: git --version
+
+3. VISUAL STUDIO BUILD TOOLS 2022
+   - Download: https://visualstudio.microsoft.com/visual-cpp-build-tools/
+   - Select "Desktop development with C++" workload
+   - This provides the C++ compiler (MSVC)
+
+4. SCONS (Build System)
+   Open a terminal and run:
+       pip install scons
+   Verify: scons --version
+
+5. GODOT 4.3
+   - Download: https://godotengine.org/download
+   - Get the Standard version (not .NET)
+
+
+================================================================================
+                          PROJECT STRUCTURE
+================================================================================
+
+circuit-visualizer/
+    godot-cpp/                    <- Godot C++ bindings (cloned)
+    ngspice/
+        ngspice.dll               <- ngspice shared library
+        include/
+            sharedspice.h         <- ngspice C header
+    src/
+        register_types.cpp        <- GDExtension registration
+        register_types.h
+        circuit_sim.cpp           <- CircuitSimulator class
+        circuit_sim.h
+    project/
+        bin/
+            ngspice.dll           <- Runtime DLL (copy)
+            *.dll                 <- Compiled extension
+        circuit_sim.gdextension   <- Extension configuration
+        project.godot             <- Godot project file
+    SConstruct                    <- Build script
+
+
+================================================================================
+                            SETUP STEPS
+================================================================================
+
+STEP 1: Clone the Repository
+--------------------------------------------------------------------------------
+    git clone <repository-url>
+    cd circuit-visualizer
+
+
+STEP 2: Clone godot-cpp (if not included)
+--------------------------------------------------------------------------------
+If the godot-cpp folder is empty or missing:
+
+    git clone https://github.com/godotengine/godot-cpp.git --branch godot-4.3-stable --recurse-submodules
+
+
+STEP 3: Download ngspice DLL
+--------------------------------------------------------------------------------
+1. Go to: https://sourceforge.net/projects/ngspice/files/ng-spice-rework/43/
+
+2. Download: ngspice-43_dll_64.zip (NOT the regular zip)
+
+3. Extract and copy files:
+
+   FROM                                    TO
+   ------------------------------------    ------------------------------------
+   Spice64_dll/bin-dll/ngspice.dll    ->  circuit-visualizer/ngspice/
+   Spice64_dll/bin-dll/ngspice.dll    ->  circuit-visualizer/project/bin/
+   Spice64_dll/include/sharedspice.h  ->  circuit-visualizer/ngspice/include/
+
+
+STEP 4: Build the Project
+--------------------------------------------------------------------------------
+Open "Developer Command Prompt for VS 2022" (search in Start menu):
+
+    cd C:\path\to\circuit-visualizer
+    scons platform=windows
+
+If scons is not recognized, use:
+    python -m SCons platform=windows
+
+NOTE: First build takes a while (compiling godot-cpp). Subsequent builds faster.
+
+BUILD OUTPUT - On success, you'll see:
+    circuit-visualizer/project/bin/libcircuit_sim.windows.template_debug.x86_64.dll
+
+
+STEP 5: Open in Godot
+--------------------------------------------------------------------------------
+1. Launch Godot 4.3
+2. Click Import
+3. Navigate to circuit-visualizer/project/
+4. Select project.godot
+5. Click Import & Edit
+
+
+STEP 6: Test the Extension
+--------------------------------------------------------------------------------
+1. Open circuit_simulator.tscn
+2. Run the scene (F5)
+3. Check the output panel for: ngspice ready!
+
+
+================================================================================
+                     USING THE CIRCUITSIMULATOR NODE
+================================================================================
+
+GDSCRIPT EXAMPLE:
+--------------------------------------------------------------------------------
+
+    extends CircuitSimulator
+
+    func _ready():
+        # Initialize ngspice
+        if initialize_ngspice():
+            print("ngspice ready!")
+
+        # Load a SPICE netlist file
+        load_netlist("res://circuits/example.spice")
+
+        # Run simulation
+        run_simulation()
+
+    func _on_simulation_finished():
+        # Get results
+        var time = get_time_vector()
+        var voltage = get_voltage("out")
+        print("Simulation complete: ", voltage.size(), " data points")
+
+
+AVAILABLE METHODS:
+--------------------------------------------------------------------------------
+    initialize_ngspice()              - Initialize the simulator (call first)
+    shutdown_ngspice()                - Clean up resources
+    is_initialized()                  - Check if ready
+    load_netlist(path)                - Load .spice file from path
+    load_netlist_string(content)      - Load netlist from string
+    run_simulation()                  - Run in background
+    run_transient(step, stop, start)  - Transient analysis
+    run_dc(source, start, stop, step) - DC sweep
+    stop_simulation()                 - Halt running simulation
+    is_running()                      - Check if simulation active
+    get_voltage(node)                 - Get voltage array for node
+    get_current(source)               - Get current array for source
+    get_time_vector()                 - Get time values array
+    get_all_vectors()                 - Get all simulation data
+    get_all_vector_names()            - List available vectors
+    set_voltage_source(name, voltage) - Set voltage for interactive control
+
+
+SIGNALS:
+--------------------------------------------------------------------------------
+    simulation_started                - Emitted when simulation begins
+    simulation_finished               - Emitted when simulation completes
+    simulation_data_ready(data)       - Emitted with data during simulation
+    ngspice_output(message)           - Console output from ngspice
+
+
+================================================================================
+                           TROUBLESHOOTING
+================================================================================
+
+PROBLEM: "scons is not recognized"
+SOLUTION:
+    - Install SCons: pip install scons
+    - Or use: python -m SCons platform=windows
+
+PROBLEM: "Failed to load ngspice.dll"
+SOLUTION:
+    - Ensure ngspice.dll is in project/bin/
+    - Make sure you downloaded the DLL version (ngspice-43_dll_64.zip)
+
+PROBLEM: CircuitSimulator node doesn't appear in Godot
+SOLUTION:
+    - Rebuild: scons platform=windows
+    - Check that .gdextension file exists in project/
+    - Restart Godot after building
+
+PROBLEM: Build errors about missing headers
+SOLUTION:
+    - Ensure godot-cpp was cloned with --recurse-submodules
+    - Run: cd godot-cpp && git submodule update --init --recursive
+
+PROBLEM: Linker errors
+SOLUTION:
+    - Use Developer Command Prompt for VS 2022, not regular CMD/PowerShell
+    - Verify Visual Studio Build Tools installed with C++ workload
+
+
+================================================================================
+                    OPTIONAL: INSTALL XSCHEM (WSL2)
+================================================================================
+
+xschem is used to create/edit circuit schematics and export SPICE netlists.
+
+1. Install WSL2 (in PowerShell as admin):
+       wsl --install -d Ubuntu
+
+2. In WSL Ubuntu terminal:
+       sudo apt update
+       sudo apt install xschem ngspice
+
+3. Access Windows files from WSL at /mnt/c/Users/...
+
+
+================================================================================
+                             REFERENCES
+================================================================================
+
+ngspice:         https://ngspice.sourceforge.io/
+Godot GDExtension: https://docs.godotengine.org/en/stable/tutorials/scripting/gdextension/
+godot-cpp:       https://github.com/godotengine/godot-cpp
+xschem:          https://github.com/StefanSchippers/xschem
+
+
+================================================================================
