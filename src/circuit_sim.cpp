@@ -14,6 +14,9 @@
 #include <ctime>
 #include <unordered_set>
 #include <vector>
+#include <iomanip>
+#include <thread>
+#include <chrono>
 
 using namespace godot;
 namespace fs = std::filesystem;
@@ -213,6 +216,54 @@ std::string rewrite_input_file_path(const std::string &line, const fs::path &bas
     std::string resolved = resolve_path_token(path_value, base_dir, pdk_root);
     return line.substr(0, value_start) + resolved + line.substr(value_end);
 }
+
+double dict_number_or_default(const Dictionary &dict, const String &key, double fallback) {
+    if (!dict.has(key)) {
+        return fallback;
+    }
+    Variant value = dict[key];
+    if (value.get_type() == Variant::INT || value.get_type() == Variant::FLOAT) {
+        return static_cast<double>(value);
+    }
+    return fallback;
+}
+
+std::string format_double(double value) {
+    std::ostringstream ss;
+    ss << std::setprecision(12) << value;
+    return ss.str();
+}
+
+std::string build_inverter_netlist(const Dictionary &params) {
+    const double vdd = dict_number_or_default(params, "vdd", 1.8);
+    const double vin_level = dict_number_or_default(params, "vin_level", 0.0);
+    const double tstep = dict_number_or_default(params, "tstep", 0.1e-9);
+    const double tstop = dict_number_or_default(params, "tstop", 200e-9);
+    const double c_load = dict_number_or_default(params, "c_load", 20e-15);
+    const double w_n = dict_number_or_default(params, "wn", 1.0e-6);
+    const double w_p = dict_number_or_default(params, "wp", 2.0e-6);
+    const double l_ch = dict_number_or_default(params, "l", 0.18e-6);
+
+    std::ostringstream netlist;
+    netlist << "* Parameterized CMOS inverter demo\n";
+    netlist << ".param VDD=" << format_double(vdd) << "\n";
+    netlist << ".param VIN_LEVEL=" << format_double(vin_level) << "\n";
+    netlist << ".param WN=" << format_double(w_n) << "\n";
+    netlist << ".param WP=" << format_double(w_p) << "\n";
+    netlist << ".param LCH=" << format_double(l_ch) << "\n";
+    netlist << ".param CLOAD=" << format_double(c_load) << "\n";
+    netlist << "VDD vdd 0 {VDD}\n";
+    netlist << "VIN in 0 {VIN_LEVEL}\n";
+    netlist << "M1 out in vdd vdd PMOS W={WP} L={LCH}\n";
+    netlist << "M2 out in 0 0 NMOS W={WN} L={LCH}\n";
+    netlist << "CLOAD out 0 {CLOAD}\n";
+    netlist << ".model NMOS NMOS LEVEL=1 VTO=0.45 KP=1.2e-4 LAMBDA=0.03\n";
+    netlist << ".model PMOS PMOS LEVEL=1 VTO=-0.45 KP=6.0e-5 LAMBDA=0.03\n";
+    netlist << ".tran " << format_double(tstep) << " " << format_double(tstop) << "\n";
+    netlist << ".save time v(in) v(out)\n";
+    netlist << ".end\n";
+    return netlist.str();
+}
 } // namespace
 
 // Static instance for callbacks
@@ -292,6 +343,8 @@ void CircuitSimulator::_bind_methods() {
     ClassDB::bind_method(D_METHOD("run_simulation"), &CircuitSimulator::run_simulation);
     ClassDB::bind_method(D_METHOD("run_transient", "step", "stop", "start"), &CircuitSimulator::run_transient, DEFVAL(0.0));
     ClassDB::bind_method(D_METHOD("run_dc", "source", "start", "stop", "step"), &CircuitSimulator::run_dc);
+    ClassDB::bind_method(D_METHOD("pause_simulation"), &CircuitSimulator::pause_simulation);
+    ClassDB::bind_method(D_METHOD("resume_simulation"), &CircuitSimulator::resume_simulation);
     ClassDB::bind_method(D_METHOD("stop_simulation"), &CircuitSimulator::stop_simulation);
     ClassDB::bind_method(D_METHOD("is_running"), &CircuitSimulator::is_running);
 
@@ -305,6 +358,8 @@ void CircuitSimulator::_bind_methods() {
     // Interactive control
     ClassDB::bind_method(D_METHOD("set_voltage_source", "source_name", "voltage"), &CircuitSimulator::set_voltage_source);
     ClassDB::bind_method(D_METHOD("get_voltage_source", "source_name"), &CircuitSimulator::get_voltage_source);
+    ClassDB::bind_method(D_METHOD("load_inverter_demo", "params"), &CircuitSimulator::load_inverter_demo, DEFVAL(Dictionary()));
+    ClassDB::bind_method(D_METHOD("set_parameter", "name", "value"), &CircuitSimulator::set_parameter);
 
     // Signals
     ADD_SIGNAL(MethodInfo("simulation_started"));
@@ -501,7 +556,15 @@ void CircuitSimulator::shutdown_ngspice() {
     }
 
     if (ng_Command) {
-        ng_Command((char*)"quit");
+        // In embedded mode, quit may crash on some macOS/libngspice builds during teardown.
+        // Halt background execution and reset state instead of invoking com_quit.
+        ng_Command((char*)"bg_halt");
+        if (ng_Running) {
+            for (int i = 0; i < 50 && ng_Running(); i++) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+        ng_Command((char*)"reset");
     }
 
     unload_ngspice_library();
@@ -548,10 +611,14 @@ bool CircuitSimulator::load_netlist_string(const String &netlist_content) {
     PackedStringArray lines = netlist_content.split("\n");
     std::vector<char*> circ_lines;
     std::vector<std::string> line_storage;
+    line_storage.reserve(lines.size());
+    circ_lines.reserve(lines.size() + 1);
 
     for (int i = 0; i < lines.size(); i++) {
         line_storage.push_back(std::string(lines[i].utf8().get_data()));
-        circ_lines.push_back((char*)line_storage.back().c_str());
+    }
+    for (std::string &line : line_storage) {
+        circ_lines.push_back(const_cast<char *>(line.c_str()));
     }
     circ_lines.push_back(nullptr);  // Null terminator
 
@@ -910,6 +977,20 @@ bool CircuitSimulator::run_dc(const String &source, double start, double stop, d
     return ret == 0;
 }
 
+void CircuitSimulator::pause_simulation() {
+    if (!initialized) {
+        return;
+    }
+    ng_Command((char*)"bg_halt");
+}
+
+void CircuitSimulator::resume_simulation() {
+    if (!initialized) {
+        return;
+    }
+    ng_Command((char*)"bg_resume");
+}
+
 void CircuitSimulator::stop_simulation() {
     if (!initialized) {
         return;
@@ -1047,4 +1128,28 @@ double CircuitSimulator::get_voltage_source(const String &source_name) {
         return (double)voltage_sources[source_name];
     }
     return 0.0;
+}
+
+bool CircuitSimulator::load_inverter_demo(const Dictionary &params) {
+    std::string netlist = build_inverter_netlist(params);
+    return load_netlist_string(String(netlist.c_str()));
+}
+
+bool CircuitSimulator::set_parameter(const String &name, double value) {
+    if (!initialized || !ng_Command) {
+        return false;
+    }
+
+    CharString name_utf8 = name.utf8();
+    std::string command = "alterparam ";
+    command += name_utf8.get_data();
+    command += "=";
+    command += format_double(value);
+    int alter_ret = ng_Command((char *)command.c_str());
+    if (alter_ret != 0) {
+        return false;
+    }
+
+    int reset_ret = ng_Command((char *)"reset");
+    return reset_ret == 0;
 }

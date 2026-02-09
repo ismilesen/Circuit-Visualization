@@ -72,6 +72,8 @@ public:
     bool run_simulation();
     bool run_transient(double step, double stop, double start = 0.0);
     bool run_dc(const String &source, double start, double stop, double step);
+    void pause_simulation();
+    void resume_simulation();
     void stop_simulation();
     bool is_running() const;
 
@@ -85,6 +87,10 @@ public:
     // Interactive control (for switches)
     void set_voltage_source(const String &source_name, double voltage);
     double get_voltage_source(const String &source_name);
+
+    // Inverter demo helpers
+    bool load_inverter_demo(const Dictionary &params = Dictionary());
+    bool set_parameter(const String &name, double value);
 
     // Static instance for callbacks
     static CircuitSimulator* instance;
