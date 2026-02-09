@@ -50,6 +50,29 @@ This avoids unreliable in-place `alterparam` usage for this embedded flow.
 Netlist generation:
 - `src/circuit_sim.cpp` (`build_inverter_netlist(...)`)
 
+Netlist:
+```cpp
+  std::ostringstream netlist;
+    netlist << "* Parameterized CMOS inverter demo\n";
+    netlist << ".param VDD=" << format_double(vdd) << "\n";
+    netlist << ".param VIN_LEVEL=" << format_double(vin_level) << "\n";
+    netlist << ".param WN=" << format_double(w_n) << "\n";
+    netlist << ".param WP=" << format_double(w_p) << "\n";
+    netlist << ".param LCH=" << format_double(l_ch) << "\n";
+    netlist << ".param CLOAD=" << format_double(c_load) << "\n";
+    netlist << "VDD vdd 0 {VDD}\n";
+    netlist << "VIN in 0 {VIN_LEVEL}\n";
+    netlist << "M1 out in vdd vdd PMOS W={WP} L={LCH}\n";
+    netlist << "M2 out in 0 0 NMOS W={WN} L={LCH}\n";
+    netlist << "CLOAD out 0 {CLOAD}\n";
+    netlist << ".model NMOS NMOS LEVEL=1 VTO=0.45 KP=1.2e-4 LAMBDA=0.03\n";
+    netlist << ".model PMOS PMOS LEVEL=1 VTO=-0.45 KP=6.0e-5 LAMBDA=0.03\n";
+    netlist << ".tran " << format_double(tstep) << " " << format_double(tstop) << "\n";
+    netlist << ".save time v(in) v(out)\n";
+    netlist << ".end\n";
+    return netlist.str();
+```
+
 Important params:
 - `VDD`
 - `VIN_LEVEL` (0V or `VDD`, controlled by UI toggle)
