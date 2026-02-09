@@ -331,7 +331,7 @@ bool CircuitSimulator::run_simulation() {
         return false;
     }
 
-    int ret = ng_Command((char*)"bg_run");
+    int ret = ng_Command((char*)"run");
     return ret == 0;
 }
 
