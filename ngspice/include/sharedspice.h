@@ -3,11 +3,20 @@
 /* Modified BSD license */
 
 /*
-Interface between a calling program (caller) and ngspice.dll (ngspice.so)
+Interface between a calling program (caller) and ngspice.dll (libngspice.so)
+
 **
 ngSpice_nospinit(void)
 Set variable no_spinit, if reading the initialization file 'spinit' is not wanted.
 To be called before ngSpice_Init()
+
+**
+ngSpice_nospiceinit(void)
+Set variable no_spiceinit, if reading the user defined initialization file 
+'.spiceinit' is not wanted.
+To be called before ngSpice_Init().
+Use with care, as this removes the last chance to send preparative commands
+before the netlist is loaded. Then use the the caller to send such commands.
 
 **
 ngSpice_Init(SendChar*, SendStat*, ControlledExit*,
@@ -97,6 +106,10 @@ during reading output vectors in the primary thread, while the simulation in the
 background thread is moving on.
 
 **
+int ngSpice_Reset(void)
+Reset ngspice as far as possible
+
+**
 Additional basics:
 No memory mallocing and freeing across the interface:
 Memory allocated in ngspice.dll has to be freed in ngspice.dll.
@@ -111,7 +124,7 @@ are of type bool if sharedspice.h is used externally.
 */
 
 #ifndef NGSPICE_PACKAGE_VERSION
-#define NGSPICE_PACKAGE_VERSION "43"
+#define NGSPICE_PACKAGE_VERSION "45.2"
 #endif
 /* we have NG_BOOL instead of BOOL */
 #ifndef HAS_NG_BOOL
@@ -154,15 +167,8 @@ struct ngcomplex {
 typedef struct ngcomplex ngcomplex_t;
 #endif
 
-/* NG_BOOL is the boolean variable at the ngspice interface.
-   When ompiling ngspice shared module, typedef to _BOOL, which is boolean in C,
-   when used externally, keep it to be of type bool,
-   as has been available in the past. */
-#ifndef SHARED_MODULE
+/* NG_BOOL is the boolean variable at the ngspice interface.*/
 typedef bool NG_BOOL;
-#else
-typedef _Bool NG_BOOL;
-#endif
 
 /* vector info obtained from any vector in ngspice.dll.
    Allows direct access to the ngspice internal vector structure,
@@ -351,6 +357,18 @@ typedef int (SendInitEvtData)(int, int, char*, char*, int, void*);
    int         identification number of calling ngspice shared lib
    void*       return pointer received from caller
 */
+
+/* Upon time step finished, all events that occurred on a node.
+ * A non-zero return value cancels further reports for tis node.
+ */
+
+typedef int (SendRawEvtData)(double, void *, void *, int);
+/*
+   double      event time
+   void*       pointer to the node's value (a Digital_t for digital nodes)
+   void*       return pointer received from caller
+   int         zero if another event report for the same node follows
+*/
 #endif
 
 /* ngspice initialization,
@@ -409,6 +427,32 @@ userData: pointer to user-defined data, will not be modified, but
 handed over back to caller during Callback, e.g. address of calling object */
 IMPEXP
 int  ngSpice_Init_Evt(SendEvtData* sevtdata, SendInitEvtData* sinitevtdata, void* userData);
+
+/* Request callback for every event on a specific XSPICE event node.
+ * A single callback function pointer is stored, with all calls directed
+ * to the function specified last.
+ * The return value identifies the node data type or is -1 on error.
+ *
+ *  node        name of an event node.
+ *  srawevt     pointer to callback function.
+ *  userData    pointer to user-defined data.
+ */
+
+IMPEXP
+int ngSpice_Raw_Evt(const char* node, SendRawEvtData* srawevt, void* userData);
+
+/* Decode raw event node data.  Return 0 on success.
+ *  evt         pointer to event data (a reported node value).
+ *  type        node type index, return value from ngSpice_Raw_Evt().
+ *  pplotval    pointer to a double, the "plotting value" is returned. NULL OK.
+ *  printval    pointer to a char pointer that is updated to point to a
+ *              readonly string describing the value. If evt is NULL, a string
+ *              identifying the node data type is returned.  NULL is OK.
+ */
+
+IMPEXP
+int ngSpice_Decode_Evt(void* evt, int type,
+                       double *pplotval, const char **pprintval);
 #endif
 
 
@@ -448,6 +492,10 @@ NG_BOOL ngSpice_SetBkpt(double time);
 /* Set variable no_spinit, if reading 'spinit' is not wanted. */
 IMPEXP
 int ngSpice_nospinit(void);
+
+/* Set variable no_spiceinit, if reading '.spiceinit' is not wanted. */
+IMPEXP
+int ngSpice_nospiceinit(void);
 
 #ifdef __cplusplus
 }
