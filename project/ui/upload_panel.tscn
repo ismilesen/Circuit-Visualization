@@ -103,7 +103,7 @@ selection_enabled = true
 
 [node name="FileDialog" type="FileDialog" parent="."]
 access = 2
-file_mode = 4
+file_mode = 1
 use_native_dialog = true
 title = "Select circuit files"
 filters = PackedStringArray("*.spice, *.cir, *.net, *.txt ; Netlists", "*.sch ; Xschem schematics", "* ; All files")

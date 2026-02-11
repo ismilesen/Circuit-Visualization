@@ -52,7 +52,7 @@ func _ready() -> void:
 	clear_button.pressed.connect(_on_clear_pressed)
 	file_dialog.file_selected.connect(_on_native_file_selected)
 	file_dialog.files_selected.connect(_on_native_files_selected)
-	file_dialog.multiselect = true
+
 
 	# OS drag-and-drop (IMPORTANT):
 	# Docs show connecting via the main viewport for file drops. :contentReference[oaicite:2]{index=2}

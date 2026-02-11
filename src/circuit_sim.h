@@ -88,8 +88,6 @@ public:
     void set_voltage_source(const String &source_name, double voltage);
     double get_voltage_source(const String &source_name);
 
-    // Inverter demo helpers
-    bool load_inverter_demo(const Dictionary &params = Dictionary());
     bool set_parameter(const String &name, double value);
 
     // Static instance for callbacks
