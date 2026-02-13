@@ -1,6 +1,7 @@
 [gd_scene format=3 uid="uid://d30g40gim6g0y"]
 
 [ext_resource type="Script" uid="uid://iq5adb3axa7s" path="res://3dschvisualizer.gd" id="1_eaxk8"]
+[ext_resource type="Script" uid="uid://g2fyw8gujl4h" path="res://camera_3d.gd" id="2_eaxk8"]
 
 [sub_resource type="SphereMesh" id="SphereMesh_n540q"]
 
@@ -10,17 +11,15 @@
 script = ExtResource("1_eaxk8")
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=488380296]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 200, 0, 100)
-projection = 1
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 200)
 current = true
 size = 20.0
 near = 0.01
-far = 100.0
+script = ExtResource("2_eaxk8")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=2001739825]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 400)
 light_energy = 3.0
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=1178223583]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 0)
 mesh = SubResource("SphereMesh_n540q")

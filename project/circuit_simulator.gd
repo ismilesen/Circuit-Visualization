@@ -1,5 +1,8 @@
 extends CircuitSimulator
 
+
+
+
 func _ready():
 	if initialize_ngspice():
 		print("ngspice ready!")
