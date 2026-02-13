@@ -30,7 +30,7 @@ Install these before starting:
        pip install scons
    Verify: scons --version
 
-5. GODOT 4.3
+5. GODOT 4.6
    - Download: https://godotengine.org/download
    - Get the Standard version (not .NET)
 
@@ -78,7 +78,7 @@ STEP 3: Download ngspice DLL
 --------------------------------------------------------------------------------
 1. Go to: https://sourceforge.net/projects/ngspice/files/ng-spice-rework/45.2/ngspice-45.2_dll_64.7z/download
 
-2. Download: ngspice-43_dll_64.zip (NOT the regular zip)
+2. Download: ngspice-45.2_dll_64.7z (NOT the regular archive)
 
 3. Extract and copy files:
 
@@ -107,7 +107,7 @@ BUILD OUTPUT - On success, you'll see:
 
 STEP 5: Open in Godot
 --------------------------------------------------------------------------------
-1. Launch Godot 4.3
+1. Launch Godot 4.6
 2. Click Import
 3. Navigate to circuit-visualizer/project/
 4. Select project.godot
@@ -188,7 +188,7 @@ SOLUTION:
 PROBLEM: "Failed to load ngspice.dll"
 SOLUTION:
     - Ensure ngspice.dll is in project/bin/
-    - Make sure you downloaded the DLL version (ngspice-43_dll_64.zip)
+    - Make sure you downloaded the DLL/shared-library package (ngspice-45.2_dll_64.7z)
 
 PROBLEM: CircuitSimulator node doesn't appear in Godot
 SOLUTION:

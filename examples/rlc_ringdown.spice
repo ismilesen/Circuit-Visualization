@@ -1,0 +1,15 @@
+* Damped RLC oscillation test
+
+VSTEP in 0 PULSE(0 1 0 1n 1n 40n 100n)
+Rsrc in n1 10
+L1 n1 n2 10u
+C1 n2 0 10n
+Rloss n2 0 5
+
+.tran 5n 5u
+
+.control
+  wrdata rlc_ringdown.csv time v(n2) i(L1)
+.endc
+
+.end

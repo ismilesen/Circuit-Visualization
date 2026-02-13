@@ -6,6 +6,9 @@
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/array.hpp>
+#include <atomic>
+#include <mutex>
+#include <thread>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -45,9 +48,21 @@ private:
     // Load ngspice dynamically
     bool load_ngspice_library();
     void unload_ngspice_library();
+    bool run_transient_chunk(double step, double stop, double start);
 
     // Voltage source values for interactive control
     Dictionary voltage_sources;
+    std::mutex ng_command_mutex;
+
+    // Continuous transient loop state.
+    std::thread continuous_thread;
+    std::atomic<bool> continuous_stop_requested;
+    std::atomic<bool> continuous_running;
+    double continuous_step;
+    double continuous_window;
+    std::atomic<double> continuous_next_start;
+    int64_t continuous_sleep_ms;
+    void stop_continuous_thread();
 
 protected:
     static void _bind_methods();
@@ -76,6 +91,10 @@ public:
     void resume_simulation();
     void stop_simulation();
     bool is_running() const;
+    bool start_continuous_transient(double step, double window, int64_t sleep_ms = 25);
+    void stop_continuous_transient();
+    bool is_continuous_transient_running() const;
+    Dictionary get_continuous_transient_state() const;
 
     // Data retrieval
     Array get_voltage(const String &node_name);

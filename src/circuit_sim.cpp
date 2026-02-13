@@ -305,6 +305,14 @@ void CircuitSimulator::_bind_methods() {
     ClassDB::bind_method(D_METHOD("resume_simulation"), &CircuitSimulator::resume_simulation);
     ClassDB::bind_method(D_METHOD("stop_simulation"), &CircuitSimulator::stop_simulation);
     ClassDB::bind_method(D_METHOD("is_running"), &CircuitSimulator::is_running);
+    ClassDB::bind_method(
+        D_METHOD("start_continuous_transient", "step", "window", "sleep_ms"),
+        &CircuitSimulator::start_continuous_transient,
+        DEFVAL(int64_t(25))
+    );
+    ClassDB::bind_method(D_METHOD("stop_continuous_transient"), &CircuitSimulator::stop_continuous_transient);
+    ClassDB::bind_method(D_METHOD("is_continuous_transient_running"), &CircuitSimulator::is_continuous_transient_running);
+    ClassDB::bind_method(D_METHOD("get_continuous_transient_state"), &CircuitSimulator::get_continuous_transient_state);
 
     // Data retrieval
     ClassDB::bind_method(D_METHOD("get_voltage", "node_name"), &CircuitSimulator::get_voltage);
@@ -323,6 +331,9 @@ void CircuitSimulator::_bind_methods() {
     ADD_SIGNAL(MethodInfo("simulation_finished"));
     ADD_SIGNAL(MethodInfo("simulation_data_ready", PropertyInfo(Variant::DICTIONARY, "data")));
     ADD_SIGNAL(MethodInfo("ngspice_output", PropertyInfo(Variant::STRING, "message")));
+    ADD_SIGNAL(MethodInfo("continuous_transient_started"));
+    ADD_SIGNAL(MethodInfo("continuous_transient_stopped"));
+    ADD_SIGNAL(MethodInfo("continuous_transient_frame", PropertyInfo(Variant::DICTIONARY, "frame")));
 }
 
 CircuitSimulator::CircuitSimulator() {
@@ -338,10 +349,17 @@ CircuitSimulator::CircuitSimulator() {
     ng_AllVecs = nullptr;
     ng_Circ = nullptr;
     ng_Running = nullptr;
+    continuous_stop_requested = false;
+    continuous_running = false;
+    continuous_step = 0.0;
+    continuous_window = 0.0;
+    continuous_next_start.store(0.0);
+    continuous_sleep_ms = 25;
     instance = this;
 }
 
 CircuitSimulator::~CircuitSimulator() {
+    stop_continuous_thread();
     if (initialized) {
         shutdown_ngspice();
     }
@@ -508,6 +526,8 @@ bool CircuitSimulator::initialize_ngspice() {
 }
 
 void CircuitSimulator::shutdown_ngspice() {
+    stop_continuous_thread();
+
     if (!initialized) {
         return;
     }
@@ -903,7 +923,21 @@ bool CircuitSimulator::run_simulation() {
         return false;
     }
 
+    std::lock_guard<std::mutex> lock(ng_command_mutex);
     int ret = ng_Command((char*)"bg_run");
+    return ret == 0;
+}
+
+bool CircuitSimulator::run_transient_chunk(double step, double stop, double start) {
+    if (!initialized || !ng_Command) {
+        return false;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "tran %g %g %g", step, stop, start);
+
+    std::lock_guard<std::mutex> lock(ng_command_mutex);
+    int ret = ng_Command(cmd);
     return ret == 0;
 }
 
@@ -913,11 +947,7 @@ bool CircuitSimulator::run_transient(double step, double stop, double start) {
         return false;
     }
 
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd), "tran %g %g %g", step, stop, start);
-    int ret = ng_Command(cmd);
-
-    return ret == 0;
+    return run_transient_chunk(step, stop, start);
 }
 
 bool CircuitSimulator::run_dc(const String &source, double start, double stop, double step) {
@@ -929,6 +959,7 @@ bool CircuitSimulator::run_dc(const String &source, double start, double stop, d
     CharString source_utf8 = source.utf8();
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "dc %s %g %g %g", source_utf8.get_data(), start, stop, step);
+    std::lock_guard<std::mutex> lock(ng_command_mutex);
     int ret = ng_Command(cmd);
 
     return ret == 0;
@@ -938,6 +969,7 @@ void CircuitSimulator::pause_simulation() {
     if (!initialized) {
         return;
     }
+    std::lock_guard<std::mutex> lock(ng_command_mutex);
     ng_Command((char*)"bg_halt");
 }
 
@@ -945,6 +977,7 @@ void CircuitSimulator::resume_simulation() {
     if (!initialized) {
         return;
     }
+    std::lock_guard<std::mutex> lock(ng_command_mutex);
     ng_Command((char*)"bg_resume");
 }
 
@@ -953,6 +986,7 @@ void CircuitSimulator::stop_simulation() {
         return;
     }
 
+    std::lock_guard<std::mutex> lock(ng_command_mutex);
     ng_Command((char*)"bg_halt");
     UtilityFunctions::print("Simulation stopped");
 }
@@ -962,6 +996,84 @@ bool CircuitSimulator::is_running() const {
         return false;
     }
     return ng_Running();
+}
+
+bool CircuitSimulator::start_continuous_transient(double step, double window, int64_t sleep_ms) {
+    if (!initialized || !ng_Command) {
+        UtilityFunctions::printerr("ngspice not initialized");
+        return false;
+    }
+    if (step <= 0.0 || window <= 0.0) {
+        UtilityFunctions::printerr("start_continuous_transient requires positive step and window");
+        return false;
+    }
+    if (window <= step) {
+        UtilityFunctions::printerr("start_continuous_transient requires window > step");
+        return false;
+    }
+
+    stop_continuous_thread();
+
+    continuous_step = step;
+    continuous_window = window;
+    continuous_next_start.store(0.0);
+    continuous_sleep_ms = sleep_ms < 1 ? 1 : sleep_ms;
+    continuous_stop_requested = false;
+    continuous_running = true;
+
+    emit_signal("continuous_transient_started");
+
+    continuous_thread = std::thread([this]() {
+        while (!continuous_stop_requested.load()) {
+            const double chunk_start = continuous_next_start.load();
+            const double chunk_stop = chunk_start + continuous_window;
+
+            if (!run_transient_chunk(continuous_step, chunk_stop, chunk_start)) {
+                UtilityFunctions::printerr("Continuous transient chunk failed");
+                break;
+            }
+
+            Dictionary frame = get_all_vectors();
+            frame["chunk_start"] = chunk_start;
+            frame["chunk_stop"] = chunk_stop;
+            frame["step"] = continuous_step;
+            emit_signal("continuous_transient_frame", frame);
+
+            continuous_next_start.store(chunk_stop);
+            std::this_thread::sleep_for(std::chrono::milliseconds(continuous_sleep_ms));
+        }
+
+        continuous_running = false;
+        emit_signal("continuous_transient_stopped");
+    });
+
+    return true;
+}
+
+void CircuitSimulator::stop_continuous_thread() {
+    continuous_stop_requested = true;
+    if (continuous_thread.joinable()) {
+        continuous_thread.join();
+    }
+    continuous_running = false;
+}
+
+void CircuitSimulator::stop_continuous_transient() {
+    stop_continuous_thread();
+}
+
+bool CircuitSimulator::is_continuous_transient_running() const {
+    return continuous_running.load();
+}
+
+Dictionary CircuitSimulator::get_continuous_transient_state() const {
+    Dictionary state;
+    state["running"] = continuous_running.load();
+    state["step"] = continuous_step;
+    state["window"] = continuous_window;
+    state["next_start"] = continuous_next_start.load();
+    state["sleep_ms"] = continuous_sleep_ms;
+    return state;
 }
 
 Array CircuitSimulator::get_voltage(const String &node_name) {
@@ -1097,6 +1209,7 @@ bool CircuitSimulator::set_parameter(const String &name, double value) {
     command += name_utf8.get_data();
     command += "=";
     command += format_double(value);
+    std::lock_guard<std::mutex> lock(ng_command_mutex);
     int alter_ret = ng_Command((char *)command.c_str());
     if (alter_ret != 0) {
         return false;

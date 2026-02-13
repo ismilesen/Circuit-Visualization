@@ -42,7 +42,11 @@ text = "Upload Files…"
 size_flags_horizontal = 3
 
 [node name="RunButton" type="Button" parent="Margin/VBox/ControlsRow"]
-text = "Run Simulation"
+text = "Run Once"
+size_flags_horizontal = 3
+
+[node name="ContinuousButton" type="Button" parent="Margin/VBox/ControlsRow"]
+text = "Start Continuous"
 size_flags_horizontal = 3
 
 [node name="ClearButton" type="Button" parent="Margin/VBox/ControlsRow"]

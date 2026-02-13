@@ -1,0 +1,13 @@
+* RC low-pass step response baseline
+
+VIN in 0 PULSE(0 1.8 0 1n 1n 50n 100n)
+R1 in out 10k
+C1 out 0 1n
+
+.tran 1n 300n
+
+.control
+  wrdata rc_lowpass_step.csv time v(in) v(out)
+.endc
+
+.end

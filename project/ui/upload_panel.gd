@@ -1,29 +1,36 @@
 extends Control
 
 @export var simulator_path: NodePath = NodePath("..")
+@export var auto_start_continuous: bool = false
+@export var continuous_step: float = 1e-11
+@export var continuous_window: float = 2e-8
+@export var continuous_sleep_ms: int = 25
 const UPLOAD_DIR := "user://uploads"
 
 var NETLIST_EXTS: PackedStringArray = PackedStringArray(["spice", "cir", "net", "txt"])
 var XSCHEM_EXTS: PackedStringArray = PackedStringArray(["sch"])
 
-@onready var upload_button: Button = $Margin/VBox/ControlsRow/UploadButton
-@onready var run_button: Button = $Margin/VBox/ControlsRow/RunButton
-@onready var clear_button: Button = $Margin/VBox/ControlsRow/ClearButton
-@onready var staged_list: ItemList = $Margin/VBox/StagedList
-@onready var status_prefix: Label = $Margin/VBox/StatusRow/StatusPrefix
-@onready var status_value: Label = $Margin/VBox/StatusRow/StatusValue
-@onready var output_box: RichTextLabel = $Margin/VBox/Output
-@onready var file_dialog: FileDialog = $FileDialog
+@onready var upload_button: Button = get_node_or_null("Margin/VBox/ControlsRow/UploadButton") as Button
+@onready var run_button: Button = get_node_or_null("Margin/VBox/ControlsRow/RunButton") as Button
+@onready var continuous_button: Button = get_node_or_null("Margin/VBox/ControlsRow/ContinuousButton") as Button
+@onready var clear_button: Button = get_node_or_null("Margin/VBox/ControlsRow/ClearButton") as Button
+@onready var staged_list: ItemList = get_node_or_null("Margin/VBox/StagedList") as ItemList
+@onready var status_prefix: Label = get_node_or_null("Margin/VBox/StatusRow/StatusPrefix") as Label
+@onready var status_value: Label = get_node_or_null("Margin/VBox/StatusRow/StatusValue") as Label
+@onready var output_box: RichTextLabel = get_node_or_null("Margin/VBox/Output") as RichTextLabel
+@onready var file_dialog: FileDialog = get_node_or_null("FileDialog") as FileDialog
 
-@onready var drop_zone: PanelContainer = $Margin/VBox/DropZone
-@onready var drop_title: Label = $Margin/VBox/DropZone/DropZoneMargin/DropZoneVBox/DropTitle
-@onready var drop_hint: Label = $Margin/VBox/DropZone/DropZoneMargin/DropZoneVBox/DropHint
+@onready var drop_zone: PanelContainer = get_node_or_null("Margin/VBox/DropZone") as PanelContainer
+@onready var drop_title: Label = get_node_or_null("Margin/VBox/DropZone/DropZoneMargin/DropZoneVBox/DropTitle") as Label
+@onready var drop_hint: Label = get_node_or_null("Margin/VBox/DropZone/DropZoneMargin/DropZoneVBox/DropHint") as Label
 
 # Each entry:
 # { "display": String, "user_path": String, "bytes": int, "kind": String, "ext": String }
 var staged: Array[Dictionary] = []
 var _sim_signal_connected: bool = false
+var _continuous_signal_connected: bool = false
 var _sim: Node = null
+var _continuous_frame_count: int = 0
 
 # --- Aesthetic theme state (light, “Microsoft-esque”) ---
 var _t: Theme = null
@@ -35,23 +42,39 @@ var _sb_drop_flash: StyleBoxFlat = null
 enum StatusTone { IDLE, OK, WARN, ERROR }
 
 func _on_native_file_selected(path: String) -> void:
-	if path.strip_edges() == "":
+	var normalized: String = _normalize_native_path(path)
+	if normalized.is_empty():
 		return
-	var added: int = int(_stage_native_file(path))
+	var added: int = int(_stage_native_file(normalized))
 	if added > 0:
 		_flash_drop_zone()
 		_refresh_status("native: staged 1 file", StatusTone.OK)
 
 
 func _ready() -> void:
+	if upload_button == null or run_button == null or continuous_button == null or clear_button == null or staged_list == null or status_prefix == null or status_value == null or file_dialog == null or drop_zone == null or drop_title == null or drop_hint == null:
+		push_error("UploadPanel scene is missing required child nodes. Ensure res://ui/upload_panel.tscn matches upload_panel.gd paths.")
+		return
+
 	_apply_light_theme()
 	_ensure_upload_dir()
 
 	upload_button.pressed.connect(_on_upload_pressed)
 	run_button.pressed.connect(_on_run_pressed)
+	continuous_button.pressed.connect(_on_continuous_pressed)
 	clear_button.pressed.connect(_on_clear_pressed)
 	file_dialog.file_selected.connect(_on_native_file_selected)
 	file_dialog.files_selected.connect(_on_native_files_selected)
+	if not OS.has_feature("web"):
+		# Keep desktop picker in OS-native mode and filesystem scope.
+		file_dialog.use_native_dialog = true
+		file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILES
+		file_dialog.filters = PackedStringArray([
+			"*.spice, *.cir, *.net, *.txt ; Netlists",
+			"*.sch ; Xschem schematics",
+			"* ; All files"
+		])
 
 
 	# OS drag-and-drop (IMPORTANT):
@@ -106,7 +129,10 @@ func _on_native_files_selected(paths: PackedStringArray) -> void:
 		return
 	var added: int = 0
 	for p: String in paths:
-		added += int(_stage_native_file(p))
+		var normalized: String = _normalize_native_path(p)
+		if normalized.is_empty():
+			continue
+		added += int(_stage_native_file(normalized))
 	_flash_drop_zone()
 	_refresh_status("native: staged %d file(s)" % added, StatusTone.OK)
 
@@ -121,9 +147,10 @@ func _on_os_files_dropped(files: PackedStringArray) -> void:
 	# Defensive: sometimes editor passes weird strings, ignore empties.
 	var added: int = 0
 	for p: String in files:
-		if p.strip_edges() == "":
+		var normalized: String = _normalize_native_path(p)
+		if normalized.is_empty():
 			continue
-		added += int(_stage_native_file(p))
+		added += int(_stage_native_file(normalized))
 
 	if added > 0:
 		_flash_drop_zone()
@@ -132,19 +159,35 @@ func _on_os_files_dropped(files: PackedStringArray) -> void:
 		_refresh_status("native: drop received, no valid files", StatusTone.WARN)
 
 func _stage_native_file(src_path: String) -> bool:
-	if not FileAccess.file_exists(src_path):
-		_set_error("File does not exist: %s" % src_path)
+	var normalized_path: String = _normalize_native_path(src_path)
+	if normalized_path.is_empty():
+		_set_error("File selection returned an empty/null path.")
 		return false
 
-	var src: FileAccess = FileAccess.open(src_path, FileAccess.READ)
+	if not FileAccess.file_exists(normalized_path):
+		_set_error("File does not exist: %s" % normalized_path)
+		return false
+
+	var src: FileAccess = FileAccess.open(normalized_path, FileAccess.READ)
 	if src == null:
-		_set_error("Failed to open: %s" % src_path)
+		_set_error("Failed to open: %s" % normalized_path)
 		return false
 
-	var bytes: PackedByteArray = src.get_buffer(src.get_length())
+	var length: int = int(src.get_length())
+	var bytes: PackedByteArray = src.get_buffer(length)
 	src.close()
 
-	var base_name: String = src_path.get_file()
+	# Some native pickers or wrappers can yield empty buffers unexpectedly.
+	if bytes == null:
+		bytes = PackedByteArray()
+	if bytes.is_empty() and length > 0:
+		var fallback_text: String = FileAccess.get_file_as_string(normalized_path)
+		bytes = fallback_text.to_utf8_buffer()
+		if bytes.is_empty():
+			_set_error("Selected file read as null/empty bytes: %s" % normalized_path)
+			return false
+
+	var base_name: String = normalized_path.get_file()
 	return _stage_bytes(base_name, bytes)
 
 func _stage_bytes(original_name: String, bytes: PackedByteArray) -> bool:
@@ -258,6 +301,11 @@ func _on_run_pressed() -> void:
 	if (not _sim_signal_connected) and _sim.has_signal("simulation_finished"):
 		_sim.connect("simulation_finished", Callable(self, "_on_sim_finished"))
 		_sim_signal_connected = true
+	if (not _continuous_signal_connected) and _sim.has_signal("continuous_transient_started") and _sim.has_signal("continuous_transient_stopped") and _sim.has_signal("continuous_transient_frame"):
+		_sim.connect("continuous_transient_started", Callable(self, "_on_continuous_started"))
+		_sim.connect("continuous_transient_stopped", Callable(self, "_on_continuous_stopped"))
+		_sim.connect("continuous_transient_frame", Callable(self, "_on_continuous_frame"))
+		_continuous_signal_connected = true
 
 	_refresh_status("native: initializing ngspice…", StatusTone.WARN)
 	var init_ok: Variant = _sim.call("initialize_ngspice")
@@ -268,23 +316,126 @@ func _on_run_pressed() -> void:
 	_refresh_status("native: loading netlist…", StatusTone.WARN)
 	var godot_path: String = str(entry["user_path"]) # user://uploads/...
 	var os_path: String = ProjectSettings.globalize_path(godot_path)
-	_sim.call("load_netlist", os_path)
 
+	# Prefer the normalized SPICE pipeline for uploaded decks.
+	# It avoids .control/quit side-effects and handles include/path normalization.
+	if _sim.has_method("run_spice_file"):
+		_refresh_status("native: running spice pipeline…", StatusTone.WARN)
+		var run_result: Variant = _sim.call("run_spice_file", os_path, "")
+		if typeof(run_result) != TYPE_DICTIONARY:
+			_set_error("run_spice_file() returned unexpected result.")
+			return
+
+		var result_dict: Dictionary = run_result as Dictionary
+		if result_dict.is_empty():
+			_set_error("run_spice_file() returned no data. Check ngspice output for deck errors.")
+			return
+
+		var key_count: int = result_dict.keys().size()
+		_refresh_status("native: simulation complete (%d result fields)" % key_count, StatusTone.OK)
+		_log("[color=lime]Simulation complete.[/color] Result keys: %s" % [str(result_dict.keys())])
+
+		if auto_start_continuous and _sim.has_method("start_continuous_transient"):
+			var started: bool = bool(_sim.call("start_continuous_transient", continuous_step, continuous_window, continuous_sleep_ms))
+			if started:
+				_refresh_status("native: continuous transient started", StatusTone.OK)
+			else:
+				_set_error("Failed to start continuous transient loop.")
+		return
+
+	# Fallback for older simulator builds that don't expose run_spice_file.
+	_sim.call("load_netlist", os_path)
+	if auto_start_continuous and _sim.has_method("start_continuous_transient"):
+		var fallback_started: bool = bool(_sim.call("start_continuous_transient", continuous_step, continuous_window, continuous_sleep_ms))
+		if fallback_started:
+			_refresh_status("native: continuous transient started", StatusTone.OK)
+			return
 	_refresh_status("native: running simulation…", StatusTone.WARN)
 	_sim.call("run_simulation")
+
+func _on_continuous_pressed() -> void:
+	if OS.has_feature("web"):
+		_set_error("Web build: continuous ngspice mode is not supported.")
+		return
+
+	_sim = _resolve_simulator()
+	if _sim == null:
+		_set_error("Could not find CircuitSimulator node.")
+		return
+	if not _sim.has_method("start_continuous_transient") or not _sim.has_method("stop_continuous_transient"):
+		_set_error("CircuitSimulator build does not expose continuous transient methods.")
+		return
+
+	if bool(_sim.call("is_continuous_transient_running")):
+		_sim.call("stop_continuous_transient")
+		_refresh_status("native: stopping continuous transient…", StatusTone.WARN)
+		return
+
+	# Ensure a deck is loaded before starting continuous chunks.
+	_on_run_pressed()
+	if _sim == null:
+		return
+
+	if bool(_sim.call("is_continuous_transient_running")):
+		return
+	var started: bool = bool(_sim.call("start_continuous_transient", continuous_step, continuous_window, continuous_sleep_ms))
+	if not started:
+		_set_error("Failed to start continuous transient loop.")
 
 func _on_sim_finished() -> void:
 	_refresh_status("native: simulation_finished", StatusTone.OK)
 	_log("[color=lime]Simulation finished.[/color]")
+
+func _on_continuous_started() -> void:
+	call_deferred("_apply_continuous_started_ui")
+
+func _on_continuous_stopped() -> void:
+	call_deferred("_apply_continuous_stopped_ui")
+
+func _on_continuous_frame(frame: Dictionary) -> void:
+	call_deferred("_apply_continuous_frame_ui", frame)
+
+func _apply_continuous_started_ui() -> void:
+	_continuous_frame_count = 0
+	if continuous_button != null:
+		continuous_button.text = "Stop Continuous"
+	_refresh_status("native: continuous transient running", StatusTone.OK)
+	_log("[color=lime]Continuous transient started.[/color]")
+
+func _apply_continuous_stopped_ui() -> void:
+	if continuous_button != null:
+		continuous_button.text = "Start Continuous"
+	_refresh_status("native: continuous transient stopped", StatusTone.WARN)
+	_log("[color=yellow]Continuous transient stopped.[/color]")
+
+func _apply_continuous_frame_ui(frame: Dictionary) -> void:
+	_continuous_frame_count += 1
+	if _continuous_frame_count % 10 != 0:
+		return
+
+	var chunk_start: float = float(frame.get("chunk_start", 0.0))
+	var chunk_stop: float = float(frame.get("chunk_stop", 0.0))
+	_refresh_status(
+		"native: continuous chunk %d (%.3e → %.3e s)" % [_continuous_frame_count, chunk_start, chunk_stop],
+		StatusTone.OK
+	)
 
 # -------------------------------------------------------------------
 # Clear staging
 # -------------------------------------------------------------------
 
 func _on_clear_pressed() -> void:
+	if _sim != null and _sim.has_method("is_continuous_transient_running") and bool(_sim.call("is_continuous_transient_running")):
+		_sim.call("stop_continuous_transient")
 	staged.clear()
-	staged_list.clear()
-	output_box.clear()
+	if staged_list != null:
+		staged_list.clear()
+	if output_box != null:
+		output_box.clear()
+	if run_button != null:
+		run_button.text = "Run Once"
+	if continuous_button != null:
+		continuous_button.text = "Start Continuous"
 	_refresh_status("staging cleared", StatusTone.WARN)
 
 # -------------------------------------------------------------------
@@ -333,6 +484,23 @@ func _avoid_collision(user_path: String) -> String:
 	var stamp: int = int(Time.get_unix_time_from_system())
 	return "%s_%d.%s" % [base, stamp, ext]
 
+func _normalize_native_path(raw_path: String) -> String:
+	var s: String = raw_path.strip_edges()
+	if s.is_empty():
+		return ""
+	if s.to_lower() == "null":
+		return ""
+	if s.begins_with("file://"):
+		s = s.trim_prefix("file://")
+		if s.begins_with("localhost/"):
+			s = s.trim_prefix("localhost/")
+		# macOS/Linux absolute file URI gives one leading slash in URI payload.
+		if s.length() >= 3 and s.begins_with("/") and s.substr(2, 1) == ":":
+			# Windows URI like /C:/...
+			s = s.substr(1)
+		s = s.uri_decode()
+	return s
+
 func _detect_kind(ext: String, bytes: PackedByteArray) -> String:
 	if XSCHEM_EXTS.has(ext):
 		return "xschem (.sch)"
@@ -351,6 +519,8 @@ func _bytes_head_as_text(bytes: PackedByteArray, n: int) -> String:
 	return slice.get_string_from_utf8()
 
 func _rebuild_list() -> void:
+	if staged_list == null:
+		return
 	staged_list.clear()
 	for e in staged:
 		var label: String = "%s    (%s, %s)    → %s" % [
@@ -369,6 +539,9 @@ func _human_size(n: int) -> String:
 	return "%.2f MB" % (float(n) / (1024.0 * 1024.0))
 
 func _refresh_status(msg: String, tone: StatusTone = StatusTone.IDLE) -> void:
+	if status_prefix == null or status_value == null:
+		return
+
 	status_prefix.text = "Status:"
 	status_prefix.add_theme_color_override("font_color", Color(1, 1, 1, 1))
 
@@ -392,8 +565,11 @@ func _set_error(msg: String) -> void:
 	_log("[color=tomato][b]Error:[/b][/color] %s" % msg)
 
 func _log(bb: String) -> void:
-	output_box.append_text(bb + "\n")
-	output_box.scroll_to_line(output_box.get_line_count())
+	if output_box != null:
+		output_box.append_text(bb + "\n")
+		output_box.scroll_to_line(output_box.get_line_count())
+	else:
+		print_rich(bb)
 
 # -------------------------------------------------------------------
 # Styling: light “Microsoft-esque” theme + drop flash
