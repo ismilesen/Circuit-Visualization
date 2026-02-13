@@ -1,11 +1,25 @@
 extends Camera3D
 
 
-@export var speed: float = 400.0   # units per second
-@export var zoom_speed: float = 300.0  # speed for zooming in/out
+@export var speed: float = 100
+@export var zoom_speed: float = 50  # speed for zooming in/out
+@export var mouse_sensitivity: float = 0.3 # rotation sensitivity
+
+
+var rotation_x := 0.0   # pitch
+var rotation_y := 0.0   # yaw
+
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
 	pass # Replace with function body.
+	
+
+func _unhandled_input(event):
+	if event is InputEventMouseMotion:
+		rotation_y -= event.relative.x * mouse_sensitivity
+		rotation_x -= event.relative.y * mouse_sensitivity
+		rotation_x = clamp(rotation_x, -90, 90) # prevent flipping
+		rotation_degrees = Vector3(rotation_x, rotation_y, 0)
 
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
