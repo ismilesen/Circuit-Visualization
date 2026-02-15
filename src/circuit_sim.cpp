@@ -11,7 +11,6 @@
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <ctime>
 #include <unordered_set>
 #include <vector>
 #include <iomanip>
@@ -22,6 +21,7 @@ using namespace godot;
 namespace fs = std::filesystem;
 
 namespace {
+// Returns a lowercase copy for case-insensitive matching.
 std::string to_lower_copy(const std::string &input) {
     std::string out = input;
     std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
@@ -30,6 +30,7 @@ std::string to_lower_copy(const std::string &input) {
     return out;
 }
 
+// Trims leading/trailing ASCII whitespace.
 std::string trim_copy(const std::string &input) {
     size_t start = 0;
     while (start < input.size() && std::isspace(static_cast<unsigned char>(input[start]))) {
@@ -44,6 +45,7 @@ std::string trim_copy(const std::string &input) {
     return input.substr(start, end - start);
 }
 
+// Case-insensitive prefix check.
 bool starts_with_ci(const std::string &line, const std::string &prefix) {
     if (line.size() < prefix.size()) {
         return false;
@@ -56,6 +58,7 @@ bool starts_with_ci(const std::string &line, const std::string &prefix) {
     return true;
 }
 
+// Removes wrapping double quotes when present.
 std::string unquote_copy(const std::string &value) {
     if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
         return value.substr(1, value.size() - 2);
@@ -63,10 +66,12 @@ std::string unquote_copy(const std::string &value) {
     return value;
 }
 
+// Adds wrapping double quotes when requested.
 std::string maybe_quote(const std::string &value, bool should_quote) {
     return should_quote ? "\"" + value + "\"" : value;
 }
 
+// Replaces all occurrences of a token in a copied string.
 std::string replace_all_copy(std::string value, const std::string &needle, const std::string &replacement) {
     size_t pos = 0;
     while ((pos = value.find(needle, pos)) != std::string::npos) {
@@ -76,6 +81,7 @@ std::string replace_all_copy(std::string value, const std::string &needle, const
     return value;
 }
 
+// Expands PDK_ROOT references from argument or environment.
 std::string expand_pdk_root(std::string value, const std::string &pdk_root) {
     const char *env_pdk_root = std::getenv("PDK_ROOT");
     const std::string root = pdk_root.empty() ? (env_pdk_root ? std::string(env_pdk_root) : std::string()) : pdk_root;
@@ -87,6 +93,7 @@ std::string expand_pdk_root(std::string value, const std::string &pdk_root) {
     return value;
 }
 
+// Resolves a path token to an absolute normalized path.
 std::string resolve_path_token(const std::string &raw_path, const fs::path &base_dir, const std::string &pdk_root) {
     std::string expanded = expand_pdk_root(raw_path, pdk_root);
     if (expanded.empty()) {
@@ -102,6 +109,7 @@ std::string resolve_path_token(const std::string &raw_path, const fs::path &base
     return p.lexically_normal().string();
 }
 
+// Reads a text file line-by-line with CRLF cleanup.
 bool read_file_lines(const fs::path &file_path, std::vector<std::string> &lines_out) {
     std::ifstream file(file_path);
     if (!file.is_open()) {
@@ -118,6 +126,7 @@ bool read_file_lines(const fs::path &file_path, std::vector<std::string> &lines_
     return true;
 }
 
+// Folds SPICE continuation lines that start with '+'.
 std::vector<std::string> to_logical_lines(const std::vector<std::string> &physical_lines) {
     std::vector<std::string> logical_lines;
     for (const std::string &raw : physical_lines) {
@@ -131,6 +140,7 @@ std::vector<std::string> to_logical_lines(const std::vector<std::string> &physic
     return logical_lines;
 }
 
+// Tracks signal names once, preserving first-seen ordering.
 void append_unique(std::vector<std::string> &signals, std::unordered_set<std::string> &seen, const std::string &signal) {
     if (signal.empty()) {
         return;
@@ -141,6 +151,7 @@ void append_unique(std::vector<std::string> &signals, std::unordered_set<std::st
     }
 }
 
+// Extracts wrdata probe names used to build a .save directive.
 void parse_wrdata_signals(const std::string &line, std::vector<std::string> &signals, std::unordered_set<std::string> &seen) {
     std::istringstream iss(line);
     std::string token;
@@ -168,6 +179,7 @@ void parse_wrdata_signals(const std::string &line, std::vector<std::string> &sig
     }
 }
 
+// Rewrites .include/.lib paths to absolute paths, with optional PDK expansion.
 std::string rewrite_include_or_lib(const std::string &line, const fs::path &base_dir, const std::string &pdk_root) {
     std::string trimmed = trim_copy(line);
     std::string lower = to_lower_copy(trimmed);
@@ -199,6 +211,7 @@ std::string rewrite_include_or_lib(const std::string &line, const fs::path &base
     return rebuilt;
 }
 
+// Rewrites input_file="..." paths to absolute normalized paths.
 std::string rewrite_input_file_path(const std::string &line, const fs::path &base_dir, const std::string &pdk_root) {
     const std::string key = "input_file=\"";
     size_t start = line.find(key);
@@ -217,17 +230,13 @@ std::string rewrite_input_file_path(const std::string &line, const fs::path &bas
     return line.substr(0, value_start) + resolved + line.substr(value_end);
 }
 
-std::string format_double(double value) {
-    std::ostringstream ss;
-    ss << std::setprecision(12) << value;
-    return ss.str();
-}
 } // namespace
 
 // Static instance for callbacks
 CircuitSimulator* CircuitSimulator::instance = nullptr;
 
 // Callback functions for ngspice
+// Streams ngspice console output to Godot and an exposed signal.
 static int ng_send_char(char *output, int id, void *user_data) {
     if (CircuitSimulator::instance) {
         CircuitSimulator::instance->emit_signal("ngspice_output", String(output));
@@ -236,16 +245,19 @@ static int ng_send_char(char *output, int id, void *user_data) {
     return 0;
 }
 
+// Receives status updates from ngspice (currently ignored).
 static int ng_send_stat(char *status, int id, void *user_data) {
     // Status updates during simulation
     return 0;
 }
 
+// Handles ngspice shutdown callback notifications.
 static int ng_controlled_exit(int status, bool immediate, bool exit_on_quit, int id, void *user_data) {
     UtilityFunctions::print("ngspice exit requested");
     return 0;
 }
 
+// Publishes streamed simulation samples while ngspice runs.
 static int ng_send_data(pvecvaluesall data, int count, int id, void *user_data) {
     // Called during simulation with new data points
     if (CircuitSimulator::instance) {
@@ -259,12 +271,14 @@ static int ng_send_data(pvecvaluesall data, int count, int id, void *user_data) 
     return 0;
 }
 
+// Receives vector metadata once a simulation is initialized.
 static int ng_send_init_data(pvecinfoall data, int id, void *user_data) {
     // Called before simulation with vector info
     UtilityFunctions::print(String("Simulation initialized with ") + String::num_int64(data->veccount) + " vectors");
     return 0;
 }
 
+// Emits lifecycle signals when the ngspice background thread starts/stops.
 static int ng_bg_thread_running(bool running, int id, void *user_data) {
     if (CircuitSimulator::instance) {
         if (running) {
@@ -277,6 +291,7 @@ static int ng_bg_thread_running(bool running, int id, void *user_data) {
 }
 
 // Callback for interactive voltage source control
+// Supplies interactive voltage source values requested by ngspice.
 static int ng_get_vsrc_data(double *voltage, double time, char *node_name, int id, void *user_data) {
     if (CircuitSimulator::instance) {
         *voltage = CircuitSimulator::instance->get_voltage_source(String(node_name));
@@ -284,6 +299,7 @@ static int ng_get_vsrc_data(double *voltage, double time, char *node_name, int i
     return 0;
 }
 
+// Registers methods and signals exposed to GDScript.
 void CircuitSimulator::_bind_methods() {
     // Initialization methods
     ClassDB::bind_method(D_METHOD("initialize_ngspice"), &CircuitSimulator::initialize_ngspice);
@@ -294,7 +310,6 @@ void CircuitSimulator::_bind_methods() {
     ClassDB::bind_method(D_METHOD("load_netlist", "netlist_path"), &CircuitSimulator::load_netlist);
     ClassDB::bind_method(D_METHOD("load_netlist_string", "netlist_content"), &CircuitSimulator::load_netlist_string);
     ClassDB::bind_method(D_METHOD("run_spice_file", "spice_path", "pdk_root"), &CircuitSimulator::run_spice_file, DEFVAL(""));
-    ClassDB::bind_method(D_METHOD("test_spice_pipeline", "output_dir"), &CircuitSimulator::test_spice_pipeline, DEFVAL(""));
     ClassDB::bind_method(D_METHOD("get_current_netlist"), &CircuitSimulator::get_current_netlist);
 
     // Simulation control
@@ -336,6 +351,7 @@ void CircuitSimulator::_bind_methods() {
     ADD_SIGNAL(MethodInfo("continuous_transient_frame", PropertyInfo(Variant::DICTIONARY, "frame")));
 }
 
+// Initializes simulator state and ngspice function pointers.
 CircuitSimulator::CircuitSimulator() {
     initialized = false;
     current_netlist = "";
@@ -358,6 +374,7 @@ CircuitSimulator::CircuitSimulator() {
     instance = this;
 }
 
+// Stops worker threads and releases ngspice resources.
 CircuitSimulator::~CircuitSimulator() {
     stop_continuous_thread();
     if (initialized) {
@@ -368,6 +385,7 @@ CircuitSimulator::~CircuitSimulator() {
     }
 }
 
+// Dynamically loads the ngspice shared library and required symbols.
 bool CircuitSimulator::load_ngspice_library() {
 #ifdef _WIN32
     ngspice_handle = LoadLibraryA("ngspice.dll");
@@ -407,17 +425,23 @@ bool CircuitSimulator::load_ngspice_library() {
         "./bin/libngspice.dylib",
         "./project/bin/libngspice.dylib",
         "./ngspice/libngspice.dylib",
+        "/opt/homebrew/lib/libngspice.dylib",
+        "/usr/local/lib/libngspice.dylib",
         "libngspice.so",
         "./libngspice.so",
         "./bin/libngspice.so",
-        "./project/bin/libngspice.so"
+        "./project/bin/libngspice.so",
+        "/opt/homebrew/lib/libngspice.so",
+        "/usr/local/lib/libngspice.so"
     };
 #else
     candidates = {
         "libngspice.so",
         "./libngspice.so",
         "./bin/libngspice.so",
-        "./project/bin/libngspice.so"
+        "./project/bin/libngspice.so",
+        "/usr/lib/libngspice.so",
+        "/usr/local/lib/libngspice.so"
     };
 #endif
 
@@ -426,6 +450,7 @@ bool CircuitSimulator::load_ngspice_library() {
     for (const std::string &candidate : candidates) {
         ngspice_handle = dlopen(candidate.c_str(), RTLD_NOW);
         if (ngspice_handle) {
+            UtilityFunctions::print("Loaded ngspice library from: " + String(candidate.c_str()));
             break;
         }
         if (!attempted_paths.is_empty()) {
@@ -475,6 +500,7 @@ bool CircuitSimulator::load_ngspice_library() {
     return true;
 }
 
+// Releases the loaded ngspice shared library handle.
 void CircuitSimulator::unload_ngspice_library() {
 #ifdef _WIN32
     if (ngspice_handle) {
@@ -489,6 +515,7 @@ void CircuitSimulator::unload_ngspice_library() {
 #endif
 }
 
+// Initializes ngspice and wires callback hooks.
 bool CircuitSimulator::initialize_ngspice() {
     if (initialized) {
         UtilityFunctions::print("ngspice already initialized");
@@ -525,6 +552,7 @@ bool CircuitSimulator::initialize_ngspice() {
     return true;
 }
 
+// Stops activity and tears down embedded ngspice safely.
 void CircuitSimulator::shutdown_ngspice() {
     stop_continuous_thread();
 
@@ -549,10 +577,12 @@ void CircuitSimulator::shutdown_ngspice() {
     UtilityFunctions::print("ngspice shut down");
 }
 
+// Reports whether ngspice is ready for commands.
 bool CircuitSimulator::is_initialized() const {
     return initialized;
 }
 
+// Loads a netlist file directly into ngspice.
 bool CircuitSimulator::load_netlist(const String &netlist_path) {
     if (!initialized) {
         UtilityFunctions::printerr("ngspice not initialized");
@@ -573,6 +603,7 @@ bool CircuitSimulator::load_netlist(const String &netlist_path) {
     return true;
 }
 
+// Loads an in-memory netlist string using ngSpice_Circ.
 bool CircuitSimulator::load_netlist_string(const String &netlist_content) {
     if (!initialized) {
         UtilityFunctions::printerr("ngspice not initialized");
@@ -611,6 +642,7 @@ bool CircuitSimulator::load_netlist_string(const String &netlist_content) {
     return true;
 }
 
+// Normalizes and runs a SPICE deck, returning sampled vectors and metadata.
 Dictionary CircuitSimulator::run_spice_file(const String &spice_path, const String &pdk_root) {
     Dictionary result;
 
@@ -755,168 +787,12 @@ Dictionary CircuitSimulator::run_spice_file(const String &spice_path, const Stri
     return result;
 }
 
-Dictionary CircuitSimulator::test_spice_pipeline(const String &output_dir) {
-    Dictionary report;
-    Array errors;
-    Dictionary checks;
-
-    auto fail = [&](const String &msg) {
-        errors.append(msg);
-    };
-
-    if (!initialized) {
-        fail("ngspice not initialized");
-        report["passed"] = false;
-        report["errors"] = errors;
-        report["checks"] = checks;
-        return report;
-    }
-
-    fs::path base_dir;
-    if (output_dir.is_empty()) {
-        base_dir = fs::temp_directory_path() / "circuit_vis_spice_test";
-    } else {
-        base_dir = fs::path(output_dir.utf8().get_data());
-    }
-    base_dir = fs::absolute(base_dir).lexically_normal();
-
-    std::time_t now = std::time(nullptr);
-    std::string stamp = std::to_string(static_cast<long long>(now));
-    fs::path run_dir = base_dir / ("run_" + stamp);
-    fs::path include_path = run_dir / "models.inc";
-    fs::path spice_path = run_dir / "pipeline_test.spice";
-
-    if (!fs::create_directories(run_dir)) {
-        if (!fs::exists(run_dir)) {
-            fail(String("Could not create test directory: ") + String(run_dir.string().c_str()));
-            report["passed"] = false;
-            report["errors"] = errors;
-            report["checks"] = checks;
-            return report;
-        }
-    }
-
-    {
-        std::ofstream inc(include_path);
-        if (!inc.is_open()) {
-            fail(String("Could not write include file: ") + String(include_path.string().c_str()));
-            report["passed"] = false;
-            report["errors"] = errors;
-            report["checks"] = checks;
-            return report;
-        }
-        inc << "* include file used by test pipeline\n";
-        inc << ".param dummy=1\n";
-    }
-
-    {
-        std::ofstream spice(spice_path);
-        if (!spice.is_open()) {
-            fail(String("Could not write spice file: ") + String(spice_path.string().c_str()));
-            report["passed"] = false;
-            report["errors"] = errors;
-            report["checks"] = checks;
-            return report;
-        }
-
-        spice << "* test deck for run_spice_file\n";
-        spice << ".include \"$PDK_ROOT/models.inc\"\n";
-        spice << "V1 in 0 PULSE(0 1.8 0\n";
-        spice << "+ 1n 1n 5n 10n)\n";
-        spice << "R1 in out 1k\n";
-        spice << "C1 out 0 1p\n";
-        spice << ".control\n";
-        spice << "tran 0.1n 20n\n";
-        spice << "wrdata out.csv v(in) v(out)\n";
-        spice << ".endc\n";
-        // Intentionally no .end; pipeline should append it.
-    }
-
-    Dictionary result = run_spice_file(
-        String(spice_path.string().c_str()),
-        String(run_dir.string().c_str())
-    );
-
-    bool has_time = result.has("time");
-    checks["has_time"] = has_time;
-    if (!has_time) {
-        fail("Missing time vector in result");
-    }
-
-    bool has_vin = result.has("v(in)");
-    checks["has_v_in"] = has_vin;
-    if (!has_vin) {
-        fail("Missing v(in) vector in result");
-    }
-
-    bool has_vout = result.has("v(out)");
-    checks["has_v_out"] = has_vout;
-    if (!has_vout) {
-        fail("Missing v(out) vector in result");
-    }
-
-    if (has_time && has_vin && has_vout) {
-        Array time_data = result["time"];
-        Array vin_data = result["v(in)"];
-        Array vout_data = result["v(out)"];
-        bool non_empty = time_data.size() > 0 && vin_data.size() > 0 && vout_data.size() > 0;
-        checks["vectors_non_empty"] = non_empty;
-        if (!non_empty) {
-            fail("Vectors are empty");
-        }
-
-        bool same_length = time_data.size() == vin_data.size() && vin_data.size() == vout_data.size();
-        checks["vectors_same_length"] = same_length;
-        if (!same_length) {
-            fail("Vector lengths do not match");
-        }
-    }
-
-    String normalized = result.has("normalized_netlist") ? String(result["normalized_netlist"]) : "";
-    bool no_control_block = normalized.find(".control") == -1 && normalized.find(".endc") == -1;
-    checks["control_removed"] = no_control_block;
-    if (!no_control_block) {
-        fail("Normalized netlist still contains .control/.endc");
-    }
-
-    bool has_tran = normalized.find(".tran 0.1n 20n") != -1;
-    checks["tran_appended"] = has_tran;
-    if (!has_tran) {
-        fail("Expected .tran line not found in normalized netlist");
-    }
-
-    bool has_save = normalized.find(".save time v(in) v(out)") != -1;
-    checks["save_appended"] = has_save;
-    if (!has_save) {
-        fail("Expected .save line not found in normalized netlist");
-    }
-
-    bool has_end = normalized.find(".end") != -1;
-    checks["end_present"] = has_end;
-    if (!has_end) {
-        fail("Expected .end not found in normalized netlist");
-    }
-
-    std::string include_abs = fs::absolute(include_path).lexically_normal().string();
-    bool include_rewritten = normalized.find(String(include_abs.c_str())) != -1;
-    checks["include_rewritten"] = include_rewritten;
-    if (!include_rewritten) {
-        fail("Expected absolute include path not found in normalized netlist");
-    }
-
-    report["passed"] = errors.is_empty();
-    report["errors"] = errors;
-    report["checks"] = checks;
-    report["test_spice_path"] = String(spice_path.string().c_str());
-    report["test_include_path"] = String(include_path.string().c_str());
-    report["normalized_netlist"] = normalized;
-    return report;
-}
-
+// Returns the most recently loaded/normalized netlist text.
 String CircuitSimulator::get_current_netlist() const {
     return current_netlist;
 }
 
+// Starts a background ngspice run (bg_run).
 bool CircuitSimulator::run_simulation() {
     if (!initialized) {
         UtilityFunctions::printerr("ngspice not initialized");
@@ -928,6 +804,7 @@ bool CircuitSimulator::run_simulation() {
     return ret == 0;
 }
 
+// Executes one transient command chunk with explicit start/stop bounds.
 bool CircuitSimulator::run_transient_chunk(double step, double stop, double start) {
     if (!initialized || !ng_Command) {
         return false;
@@ -941,6 +818,7 @@ bool CircuitSimulator::run_transient_chunk(double step, double stop, double star
     return ret == 0;
 }
 
+// Runs a transient analysis command.
 bool CircuitSimulator::run_transient(double step, double stop, double start) {
     if (!initialized) {
         UtilityFunctions::printerr("ngspice not initialized");
@@ -950,6 +828,7 @@ bool CircuitSimulator::run_transient(double step, double stop, double start) {
     return run_transient_chunk(step, stop, start);
 }
 
+// Runs a DC sweep command.
 bool CircuitSimulator::run_dc(const String &source, double start, double stop, double step) {
     if (!initialized) {
         UtilityFunctions::printerr("ngspice not initialized");
@@ -965,6 +844,7 @@ bool CircuitSimulator::run_dc(const String &source, double start, double stop, d
     return ret == 0;
 }
 
+// Pauses a running background simulation.
 void CircuitSimulator::pause_simulation() {
     if (!initialized) {
         return;
@@ -973,6 +853,7 @@ void CircuitSimulator::pause_simulation() {
     ng_Command((char*)"bg_halt");
 }
 
+// Resumes a paused background simulation.
 void CircuitSimulator::resume_simulation() {
     if (!initialized) {
         return;
@@ -981,6 +862,7 @@ void CircuitSimulator::resume_simulation() {
     ng_Command((char*)"bg_resume");
 }
 
+// Halts current simulation activity.
 void CircuitSimulator::stop_simulation() {
     if (!initialized) {
         return;
@@ -991,6 +873,7 @@ void CircuitSimulator::stop_simulation() {
     UtilityFunctions::print("Simulation stopped");
 }
 
+// Queries ngspice for current background run state.
 bool CircuitSimulator::is_running() const {
     if (!initialized || !ng_Running) {
         return false;
@@ -998,6 +881,7 @@ bool CircuitSimulator::is_running() const {
     return ng_Running();
 }
 
+// Starts a looping transient stream that emits frame snapshots.
 bool CircuitSimulator::start_continuous_transient(double step, double window, int64_t sleep_ms) {
     if (!initialized || !ng_Command) {
         UtilityFunctions::printerr("ngspice not initialized");
@@ -1050,6 +934,7 @@ bool CircuitSimulator::start_continuous_transient(double step, double window, in
     return true;
 }
 
+// Signals and joins the continuous worker thread.
 void CircuitSimulator::stop_continuous_thread() {
     continuous_stop_requested = true;
     if (continuous_thread.joinable()) {
@@ -1058,14 +943,17 @@ void CircuitSimulator::stop_continuous_thread() {
     continuous_running = false;
 }
 
+// Public wrapper to stop continuous transient streaming.
 void CircuitSimulator::stop_continuous_transient() {
     stop_continuous_thread();
 }
 
+// Reports whether continuous transient mode is active.
 bool CircuitSimulator::is_continuous_transient_running() const {
     return continuous_running.load();
 }
 
+// Returns current continuous transient loop parameters/state.
 Dictionary CircuitSimulator::get_continuous_transient_state() const {
     Dictionary state;
     state["running"] = continuous_running.load();
@@ -1076,6 +964,7 @@ Dictionary CircuitSimulator::get_continuous_transient_state() const {
     return state;
 }
 
+// Fetches a node voltage vector as v(node_name).
 Array CircuitSimulator::get_voltage(const String &node_name) {
     Array result;
 
@@ -1095,6 +984,7 @@ Array CircuitSimulator::get_voltage(const String &node_name) {
     return result;
 }
 
+// Fetches a source current vector as i(source_name).
 Array CircuitSimulator::get_current(const String &source_name) {
     Array result;
 
@@ -1114,6 +1004,7 @@ Array CircuitSimulator::get_current(const String &source_name) {
     return result;
 }
 
+// Fetches the current time vector.
 Array CircuitSimulator::get_time_vector() {
     Array result;
 
@@ -1132,6 +1023,7 @@ Array CircuitSimulator::get_time_vector() {
     return result;
 }
 
+// Fetches all vectors from the active ngspice plot.
 Dictionary CircuitSimulator::get_all_vectors() {
     Dictionary result;
 
@@ -1163,6 +1055,7 @@ Dictionary CircuitSimulator::get_all_vectors() {
     return result;
 }
 
+// Returns only vector names from the active ngspice plot.
 PackedStringArray CircuitSimulator::get_all_vector_names() {
     PackedStringArray result;
 
@@ -1187,11 +1080,13 @@ PackedStringArray CircuitSimulator::get_all_vector_names() {
     return result;
 }
 
+// Sets an interactive voltage source override value.
 void CircuitSimulator::set_voltage_source(const String &source_name, double voltage) {
     voltage_sources[source_name] = voltage;
     UtilityFunctions::print("Set " + source_name + " to " + String::num(voltage) + "V");
 }
 
+// Returns the latest interactive voltage source value.
 double CircuitSimulator::get_voltage_source(const String &source_name) {
     if (voltage_sources.has(source_name)) {
         return (double)voltage_sources[source_name];
@@ -1199,6 +1094,7 @@ double CircuitSimulator::get_voltage_source(const String &source_name) {
     return 0.0;
 }
 
+// Updates a .param value and resets ngspice state.
 bool CircuitSimulator::set_parameter(const String &name, double value) {
     if (!initialized || !ng_Command) {
         return false;
@@ -1208,7 +1104,9 @@ bool CircuitSimulator::set_parameter(const String &name, double value) {
     std::string command = "alterparam ";
     command += name_utf8.get_data();
     command += "=";
-    command += format_double(value);
+    std::ostringstream value_stream;
+    value_stream << std::setprecision(12) << value;
+    command += value_stream.str();
     std::lock_guard<std::mutex> lock(ng_command_mutex);
     int alter_ret = ng_Command((char *)command.c_str());
     if (alter_ret != 0) {

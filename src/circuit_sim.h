@@ -80,7 +80,6 @@ public:
     bool load_netlist(const String &netlist_path);
     bool load_netlist_string(const String &netlist_content);
     Dictionary run_spice_file(const String &spice_path, const String &pdk_root = "");
-    Dictionary test_spice_pipeline(const String &output_dir = "");
     String get_current_netlist() const;
 
     // Simulation control

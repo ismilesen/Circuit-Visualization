@@ -41,6 +41,7 @@ var _sb_drop_flash: StyleBoxFlat = null
 
 enum StatusTone { IDLE, OK, WARN, ERROR }
 
+# Handles single-file selection from the native file dialog.
 func _on_native_file_selected(path: String) -> void:
 	var normalized: String = _normalize_native_path(path)
 	if normalized.is_empty():
@@ -50,7 +51,7 @@ func _on_native_file_selected(path: String) -> void:
 		_flash_drop_zone()
 		_refresh_status("native: staged 1 file", StatusTone.OK)
 
-
+# Initializes node references, UI theme, and runtime signal wiring.
 func _ready() -> void:
 	if upload_button == null or run_button == null or continuous_button == null or clear_button == null or staged_list == null or status_prefix == null or status_value == null or file_dialog == null or drop_zone == null or drop_title == null or drop_hint == null:
 		push_error("UploadPanel scene is missing required child nodes. Ensure res://ui/upload_panel.tscn matches upload_panel.gd paths.")
@@ -78,7 +79,6 @@ func _ready() -> void:
 
 
 	# OS drag-and-drop (IMPORTANT):
-	# Docs show connecting via the main viewport for file drops. :contentReference[oaicite:2]{index=2}
 	# On Windows, when running from the editor, drag-drop can be intercepted by the editor UI,
 	# so the most reliable test is in an exported .exe.
 	if not OS.has_feature("web"):
@@ -104,6 +104,7 @@ func _ready() -> void:
 		else:
 			_log("[color=yellow]Web upload bridge not detected yet. Ensure upload_bridge.js is included in the exported HTML.[/color]")
 
+# Polls the browser upload queue each frame in web builds.
 func _process(_delta: float) -> void:
 	if OS.has_feature("web"):
 		_poll_web_queue()
@@ -112,6 +113,7 @@ func _process(_delta: float) -> void:
 # Upload flows
 # -------------------------------------------------------------------
 
+# Opens the upload picker appropriate for web or desktop.
 func _on_upload_pressed() -> void:
 	if OS.has_feature("web"):
 		var ok: bool = _web_eval_bool("typeof window.godotUploadOpenPicker === 'function'")
@@ -124,6 +126,7 @@ func _on_upload_pressed() -> void:
 		file_dialog.popup_centered_ratio(0.8)
 		_refresh_status("native: file dialog opened", StatusTone.WARN)
 
+# Stages all files returned by native multi-select.
 func _on_native_files_selected(paths: PackedStringArray) -> void:
 	if paths.is_empty():
 		return
@@ -136,9 +139,9 @@ func _on_native_files_selected(paths: PackedStringArray) -> void:
 	_flash_drop_zone()
 	_refresh_status("native: staged %d file(s)" % added, StatusTone.OK)
 
+# Handles OS drag-and-drop file payloads.
 func _on_os_files_dropped(files: PackedStringArray) -> void:
 	# OS-level drag-and-drop from Explorer/Finder/etc.
-	# Note: only works with native windows (main window / non-embedded). :contentReference[oaicite:3]{index=3}
 	if OS.has_feature("web"):
 		return
 	if files.is_empty():
@@ -158,6 +161,7 @@ func _on_os_files_dropped(files: PackedStringArray) -> void:
 	else:
 		_refresh_status("native: drop received, no valid files", StatusTone.WARN)
 
+# Reads a native file from disk and stages its bytes.
 func _stage_native_file(src_path: String) -> bool:
 	var normalized_path: String = _normalize_native_path(src_path)
 	if normalized_path.is_empty():
@@ -190,6 +194,7 @@ func _stage_native_file(src_path: String) -> bool:
 	var base_name: String = normalized_path.get_file()
 	return _stage_bytes(base_name, bytes)
 
+# Writes staged bytes into user://uploads and tracks metadata.
 func _stage_bytes(original_name: String, bytes: PackedByteArray) -> bool:
 	_ensure_upload_dir()
 
@@ -223,6 +228,7 @@ func _stage_bytes(original_name: String, bytes: PackedByteArray) -> bool:
 # Web queue polling (JS -> Godot)
 # -------------------------------------------------------------------
 
+# Pulls one queued web upload item and stages it.
 func _poll_web_queue() -> void:
 	var raw: Variant = JavaScriptBridge.eval("""
 		(() => {
@@ -262,6 +268,7 @@ func _poll_web_queue() -> void:
 		_flash_drop_zone()
 		_refresh_status("web: staged %s (%s)" % [filename, _human_size(bytes.size())], StatusTone.OK)
 
+# Evaluates a JS expression and returns it as boolean.
 func _web_eval_bool(expr: String) -> bool:
 	var v: Variant = JavaScriptBridge.eval("(%s) ? true : false" % expr, true)
 	return bool(v)
@@ -270,6 +277,7 @@ func _web_eval_bool(expr: String) -> bool:
 # Run simulation
 # -------------------------------------------------------------------
 
+# Runs simulation for the currently selected staged netlist.
 func _on_run_pressed() -> void:
 	if staged.is_empty():
 		_set_error("No staged files. Upload a .spice/.cir/.net/.txt netlist first.")
@@ -353,6 +361,7 @@ func _on_run_pressed() -> void:
 	_refresh_status("native: running simulation…", StatusTone.WARN)
 	_sim.call("run_simulation")
 
+# Toggles continuous transient mode for the loaded netlist.
 func _on_continuous_pressed() -> void:
 	if OS.has_feature("web"):
 		_set_error("Web build: continuous ngspice mode is not supported.")
@@ -382,19 +391,24 @@ func _on_continuous_pressed() -> void:
 	if not started:
 		_set_error("Failed to start continuous transient loop.")
 
+# Updates UI after one-shot simulation completion.
 func _on_sim_finished() -> void:
 	_refresh_status("native: simulation_finished", StatusTone.OK)
 	_log("[color=lime]Simulation finished.[/color]")
 
+# Defers continuous-start UI updates to the main thread.
 func _on_continuous_started() -> void:
 	call_deferred("_apply_continuous_started_ui")
 
+# Defers continuous-stop UI updates to the main thread.
 func _on_continuous_stopped() -> void:
 	call_deferred("_apply_continuous_stopped_ui")
 
+# Defers per-frame continuous UI updates to the main thread.
 func _on_continuous_frame(frame: Dictionary) -> void:
 	call_deferred("_apply_continuous_frame_ui", frame)
 
+# Applies UI state when continuous mode starts.
 func _apply_continuous_started_ui() -> void:
 	_continuous_frame_count = 0
 	if continuous_button != null:
@@ -402,12 +416,14 @@ func _apply_continuous_started_ui() -> void:
 	_refresh_status("native: continuous transient running", StatusTone.OK)
 	_log("[color=lime]Continuous transient started.[/color]")
 
+# Applies UI state when continuous mode stops.
 func _apply_continuous_stopped_ui() -> void:
 	if continuous_button != null:
 		continuous_button.text = "Start Continuous"
 	_refresh_status("native: continuous transient stopped", StatusTone.WARN)
 	_log("[color=yellow]Continuous transient stopped.[/color]")
 
+# Updates status text periodically while streaming continuous frames.
 func _apply_continuous_frame_ui(frame: Dictionary) -> void:
 	_continuous_frame_count += 1
 	if _continuous_frame_count % 10 != 0:
@@ -424,6 +440,7 @@ func _apply_continuous_frame_ui(frame: Dictionary) -> void:
 # Clear staging
 # -------------------------------------------------------------------
 
+# Clears staged files, output logs, and continuous state.
 func _on_clear_pressed() -> void:
 	if _sim != null and _sim.has_method("is_continuous_transient_running") and bool(_sim.call("is_continuous_transient_running")):
 		_sim.call("stop_continuous_transient")
@@ -442,6 +459,7 @@ func _on_clear_pressed() -> void:
 # Helpers
 # -------------------------------------------------------------------
 
+# Resolves the simulator node from configured path or scene search.
 func _resolve_simulator() -> Node:
 	if simulator_path != NodePath("") and has_node(simulator_path):
 		var n0: Node = get_node(simulator_path)
@@ -463,10 +481,12 @@ func _resolve_simulator() -> Node:
 
 	return null
 
+# Ensures user://uploads exists before staging files.
 func _ensure_upload_dir() -> void:
 	var abs_path: String = ProjectSettings.globalize_path(UPLOAD_DIR)
 	DirAccess.make_dir_recursive_absolute(abs_path)
 
+# Removes path-unsafe characters from upload filenames.
 func _sanitize_filename(filename: String) -> String:
 	var s: String = filename.strip_edges()
 	s = s.replace("\\", "_").replace("/", "_").replace(":", "_")
@@ -475,6 +495,7 @@ func _sanitize_filename(filename: String) -> String:
 		s = "upload.bin"
 	return s
 
+# Avoids filename collisions in the upload directory.
 func _avoid_collision(user_path: String) -> String:
 	if not FileAccess.file_exists(user_path):
 		return user_path
@@ -484,6 +505,7 @@ func _avoid_collision(user_path: String) -> String:
 	var stamp: int = int(Time.get_unix_time_from_system())
 	return "%s_%d.%s" % [base, stamp, ext]
 
+# Normalizes native/file:// paths from pickers and drag-drop.
 func _normalize_native_path(raw_path: String) -> String:
 	var s: String = raw_path.strip_edges()
 	if s.is_empty():
@@ -501,6 +523,7 @@ func _normalize_native_path(raw_path: String) -> String:
 		s = s.uri_decode()
 	return s
 
+# Classifies staged content as netlist/xschem/unknown.
 func _detect_kind(ext: String, bytes: PackedByteArray) -> String:
 	if XSCHEM_EXTS.has(ext):
 		return "xschem (.sch)"
@@ -511,13 +534,16 @@ func _detect_kind(ext: String, bytes: PackedByteArray) -> String:
 		return "netlist/text"
 	return "unknown"
 
+# Returns whether a staged entry is a runnable netlist.
 func _is_netlist_entry(entry: Dictionary) -> bool:
 	return entry.has("ext") and NETLIST_EXTS.has(str(entry["ext"]))
 
+# Reads the first N bytes as UTF-8 text for lightweight sniffing.
 func _bytes_head_as_text(bytes: PackedByteArray, n: int) -> String:
 	var slice: PackedByteArray = bytes.slice(0, min(n, bytes.size()))
 	return slice.get_string_from_utf8()
 
+# Rebuilds the visible staged-file list from internal state.
 func _rebuild_list() -> void:
 	if staged_list == null:
 		return
@@ -531,6 +557,7 @@ func _rebuild_list() -> void:
 		]
 		staged_list.add_item(label)
 
+# Formats byte counts for status/list display.
 func _human_size(n: int) -> String:
 	if n < 1024:
 		return "%d B" % n
@@ -538,6 +565,7 @@ func _human_size(n: int) -> String:
 		return "%.1f KB" % (float(n) / 1024.0)
 	return "%.2f MB" % (float(n) / (1024.0 * 1024.0))
 
+# Updates status message and tone colors.
 func _refresh_status(msg: String, tone: StatusTone = StatusTone.IDLE) -> void:
 	if status_prefix == null or status_value == null:
 		return
@@ -560,10 +588,12 @@ func _refresh_status(msg: String, tone: StatusTone = StatusTone.IDLE) -> void:
 
 	status_value.add_theme_color_override("font_color", c)
 
+# Marks an error state and appends a formatted log entry.
 func _set_error(msg: String) -> void:
 	_refresh_status("error", StatusTone.ERROR)
 	_log("[color=tomato][b]Error:[/b][/color] %s" % msg)
 
+# Appends rich-text output to the panel log box.
 func _log(bb: String) -> void:
 	if output_box != null:
 		output_box.append_text(bb + "\n")
@@ -575,6 +605,7 @@ func _log(bb: String) -> void:
 # Styling: light “Microsoft-esque” theme + drop flash
 # -------------------------------------------------------------------
 
+# Builds and applies the panel's light custom theme.
 func _apply_light_theme() -> void:
 	_t = Theme.new()
 
@@ -710,6 +741,7 @@ func _apply_light_theme() -> void:
 	theme = _t
 	drop_zone.add_theme_stylebox_override("panel", _sb_drop_idle)
 
+# Temporarily highlights the drop zone after successful staging.
 func _flash_drop_zone() -> void:
 	drop_zone.add_theme_stylebox_override("panel", _sb_drop_flash)
 	drop_title.text = "Dropped, staging…"

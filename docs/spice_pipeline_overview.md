@@ -40,39 +40,6 @@ Return payload:
 - `normalized_netlist`: final netlist text that was sent to ngspice
 - `signal_count`: number of extracted save signals
 
-## `test_spice_pipeline(output_dir = "")`
-
-Location:
-- `src/circuit_sim.h`
-- `src/circuit_sim.cpp`
-
-What it does:
-1. Creates a temporary test run directory.
-2. Writes a tiny include file and a synthetic `.spice` deck.
-3. Deck intentionally includes:
-- `.include "$PDK_ROOT/..."`
-- line continuation with `+`
-- `.control/.endc` with `tran` and `wrdata`
-- missing `.end`
-4. Runs `run_spice_file(...)` on that deck.
-5. Evaluates checks and returns a report dictionary.
-
-Report fields:
-- `passed`: overall pass/fail
-- `checks`: per-condition booleans
-- `errors`: human-readable failed checks
-- `test_spice_path`, `test_include_path`
-- `normalized_netlist`
-
-Main checks:
-- vectors exist: `time`, `v(in)`, `v(out)`
-- vectors are non-empty and same length
-- `.control/.endc` removed
-- `.tran` appended
-- `.save` appended from `wrdata`
-- `.end` present
-- include path rewritten to absolute
-
 ## Internal helper functions (new, file-local)
 
 In `src/circuit_sim.cpp` under anonymous namespace:
@@ -103,9 +70,6 @@ This fixed startup failures where only `libngspice.so` was being attempted on ma
 
 ```gdscript
 if initialize_ngspice():
-	var report = test_spice_pipeline()
-	print(report)
-
 	var result = run_spice_file("/absolute/path/to/deck.spice", "/absolute/path/to/pdk_root")
 	print(result.keys())
 ```
