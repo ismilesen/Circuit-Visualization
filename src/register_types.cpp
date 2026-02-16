@@ -1,6 +1,7 @@
 #include "register_types.h"
 
 #include "circuit_sim.h"
+#include "sch_parser.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/defs.hpp>
@@ -14,6 +15,7 @@ void initialize_circuit_sim_module(ModuleInitializationLevel p_level) {
     }
 
     ClassDB::register_class<CircuitSimulator>();
+    ClassDB::register_class<SchParser>();
 }
 
 void uninitialize_circuit_sim_module(ModuleInitializationLevel p_level) {

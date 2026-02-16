@@ -1,0 +1,31 @@
+[gd_scene format=3 uid="uid://d30g40gim6g0y"]
+
+[ext_resource type="Script" uid="uid://iq5adb3axa7s" path="res://3Dschvisualizer.gd" id="1_eaxk8"]
+[ext_resource type="Script" uid="uid://g2fyw8gujl4h" path="res://camera/camera_3d.gd" id="2_eaxk8"]
+
+[sub_resource type="Environment" id="Environment_1"]
+background_mode = 1
+background_color = Color(0.1, 0.1, 0.15, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.3, 0.3, 0.35, 1)
+ambient_light_energy = 0.5
+
+[node name="3dschvisualizer" type="Node3D" unique_id=567660543]
+
+[node name="3dvisualizer" type="Node3D" parent="." unique_id=1958251575]
+script = ExtResource("1_eaxk8")
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=488380296]
+transform = Transform3D(1, 0, 0, 0, 0.866, 0.5, 0, -0.5, 0.866, 0, 3, 5)
+current = true
+fov = 39.0
+far = 2989.91
+script = ExtResource("2_eaxk8")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=2001739825]
+transform = Transform3D(1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 0, 5, 5)
+light_energy = 0.8
+shadow_enabled = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1263641587]
+environment = SubResource("Environment_1")

@@ -1,0 +1,117 @@
+[gd_scene format=3 uid="uid://b1ayde04iedlc"]
+
+[ext_resource type="Script" uid="uid://82xmshaer863" path="res://ui/upload_panel.gd" id="1"]
+
+[node name="UploadPanel" type="Control" unique_id=906416553]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_vertical = 0
+script = ExtResource("1")
+
+[node name="Margin" type="MarginContainer" parent="." unique_id=1830505601]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 24.0
+offset_top = 24.0
+offset_right = -24.0
+offset_bottom = -24.0
+
+[node name="VBox" type="VBoxContainer" parent="Margin" unique_id=1443439760]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 0
+theme_override_constants/separation = 12
+
+[node name="Header" type="Label" parent="Margin/VBox" unique_id=1056655914]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 40
+text = "Circuit Upload"
+
+[node name="Subheader" type="Label" parent="Margin/VBox" unique_id=914711821]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 13
+text = "Upload or drop your circuit files, we save copies in a safe ‘uploads’ folder, then (on Windows/macOS/Linux) we run ngspice to generate the data Godot will visualize."
+autowrap_mode = 3
+
+[node name="ControlsRow" type="HBoxContainer" parent="Margin/VBox" unique_id=1182881701]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 10
+
+[node name="UploadButton" type="Button" parent="Margin/VBox/ControlsRow" unique_id=1203968573]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Upload Files…"
+
+[node name="RunButton" type="Button" parent="Margin/VBox/ControlsRow" unique_id=1063417615]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Run Simulation"
+
+[node name="ClearButton" type="Button" parent="Margin/VBox/ControlsRow" unique_id=1178591345]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Clear"
+
+[node name="DropZone" type="PanelContainer" parent="Margin/VBox" unique_id=267995915]
+custom_minimum_size = Vector2(0, 110)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 0
+
+[node name="DropZoneMargin" type="MarginContainer" parent="Margin/VBox/DropZone" unique_id=1988959326]
+layout_mode = 2
+
+[node name="DropZoneVBox" type="VBoxContainer" parent="Margin/VBox/DropZone/DropZoneMargin" unique_id=861782801]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="DropTitle" type="Label" parent="Margin/VBox/DropZone/DropZoneMargin/DropZoneVBox" unique_id=1013891248]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Drop files here"
+
+[node name="DropHint" type="Label" parent="Margin/VBox/DropZone/DropZoneMargin/DropZoneVBox" unique_id=1008675127]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = ".sch, .spice/.cir/.net, .txt. Native: drop from Explorer anywhere onto the window. Web: use Upload Files."
+autowrap_mode = 3
+
+[node name="StagedList" type="ItemList" parent="Margin/VBox" unique_id=181855462]
+custom_minimum_size = Vector2(0, 80)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 0
+allow_reselect = true
+auto_height = true
+
+[node name="StatusRow" type="HBoxContainer" parent="Margin/VBox" unique_id=1692895187]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="StatusPrefix" type="Label" parent="Margin/VBox/StatusRow" unique_id=710659912]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 12
+text = "Status:"
+
+[node name="StatusValue" type="Label" parent="Margin/VBox/StatusRow" unique_id=428865356]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_colors/font_color = Color(1, 0.65, 0.2, 1)
+theme_override_font_sizes/font_size = 12
+text = "idle"
+
+[node name="FileDialog" type="FileDialog" parent="." unique_id=7508187]
+title = "Open File(s)"
+file_mode = 1
+access = 2
+filters = PackedStringArray("*.spice, *.cir, *.net, *.txt ; Netlists", "*.sch ; Xschem schematics", "* ; All files")
+use_native_dialog = true
