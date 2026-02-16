@@ -1,0 +1,43 @@
+# Prerequisites
+*.d
+
+# Object files
+*.o
+*.obj
+
+# Libraries
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+
+# bison output
+src/expandlabel.c
+src/expandlabel.h
+src/eval_expr.c
+# flex output
+src/parselabel.c
+src/parselabel.h
+
+# Executables
+*.exe
+src/rawtovcd
+src/xschem
+
+/build
+CMakeLists.txt
+.vscode
+
+src/Makefile
+scconfig/sccbox
+scconfig/configure
+scconfig/config.log
+scconfig/config.cache
+doc/manpages/xschem.1
+Makefile.conf
+config.h
+*.Identifier

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>XSCHEM TUTORIAL: CREATE SYMBOL</title>
+<link rel="stylesheet" type="text/css" href="xschem_man.css" />
+<style type="text/css">
+/* Local styling goes here */
+p{padding: 15px  30px 10px;}
+</style>
+
+</head>
+<body>
+
+<!-- start of slide -->
+<div class="content">   
+<!-- navigation buttons -->
+<a href="xschem_man.html" class="home">UP</a>
+
+ <!-- slide title -->
+ <h1> TUTORIAL: Manage XSCHEM design / symbol libraries </h1>
+ <p>
+  There are various ways to describe symbol locations in xschem,<br>
+ </p>
+ <ul>
+ <li>
+  first approach: define a <kbd>XSCHEM_LIBRARY_PATH</kbd> that is a list of paths
+  to last level directories containing .sym /.sch files
+ </li>
+ <li>
+  second approach: define a <kbd>XSCHEM_LIBRARY_PATH</kbd> that is a list of paths
+  one or more levels above the directories containing .sym/.sch files
+ </li>
+ <li>
+  Third approach: define a <kbd>XSCHEM_LIBRARY_PATH</kbd> that is a hierarchy of paths,
+  zero, one or more levels above the directories containing .sym/.sch files.
+  If you have a directory tree where each directory level may contain .sch and .sym files you should list the deepest
+  directories first so xschem will start searching for a symbol reference in the deepest levels first.
+ </li>
+ </ul>
+ <p>
+  In the first approach a '<kbd>npn.sym</kbd>' symbol placed in a schematic will be
+  saved as '<kbd>npn.sym</kbd>' in the .sch file, when loading back the parent
+  schematic xschem will go through the elements of <kbd>XSCHEM_LIBRARY_PATH</kbd> and look for
+  a directory containing <kbd>npn.sym</kbd>.
+ </p>
+
+ <p>
+  In the second approach the '<kbd>npn.sym</kbd>' will be saved as
+  '<kbd>devices/npn.sym</kbd>' (assuming <kbd>devices/</kbd> is the directory containing this
+  symbol) . This is because the <kbd>XSCHEM_LIBRARY_PATH</kbd> is pointing to
+  something like <kbd>/some/path/xschem_library/</kbd>
+  and <kbd>xschem_library/</kbd> contains <kbd>devices/</kbd> (names are just given as
+  examples, any dir name is allowed for <kbd>xschem_library/</kbd> and <kbd>devices/</kbd>)
+ </p>
+
+ <p>
+  In the third approach '<kbd>npn.sym</kbd>' or some other <kbd>dir/symbol.sym</kbd> will be searched in all
+  path elements listed in <kbd>XSCHEM_LIBRARY_PATH</kbd>, by appending the symbol reference to each path element
+  until a file is found. the first match is used. This is the reason you should put the deepest directories first
+  in <kbd>XSCHEM_LIBRARY_PATH</kbd>. If <kbd>/a/b/c/dir/symbol.sym</kbd> is inserted in the design and
+  XSCHEM_LIBRARY_PATH contains 
+  the following definitions:<br>
+  <kbd>set XSCHEM_LIBRARY_PATH /a/b/c /a/b /a</kbd><br>
+  the symbol reference will be just <kbd>dir/symbol.sym</kbd>, since appending the symbol reference to the first path an
+  existing file is found.
+  If the following definition for XSCHEM_LIBRARY_PATH is given instead:<br>
+  <kbd>set XSCHEM_LIBRARY_PATH /a /a/b/ /a/b/c</kbd><br>
+  then the symbol reference will be <kbd>/b/c/dir/symbol.sym</kbd> since the first path component was found in
+  the absolute path of the inserted symbol and the only matching prefix is removed from the relative symbol reference that will 
+  be saved in the schematic.
+ </p>
+ <p>
+  The first approach is preferred by pcb hobbysts, people working on
+  small designs.
+  the second approach is preferred for big designs where a one or more directory level
+  indirection is desired for symbols, so any symbol in xschem is given
+  as '<kbd>libname/symname.sym</kbd>' (one level directory specification in symbol references)
+  or '<kbd>libgroup/libname/symname.sym</kbd>' (2 level directory specification in symbol references)
+  instead of just '<kbd>symname.sym</kbd>'<br>
+ </p>
+ <p class="important"><strong>
+  SYMBOL LOOKUP (ie when loading a schematic):<br>
+  The absolute path of the symbol reference is obtained by appending 
+  the symbol reference to the XSCHEM_LIBRARY_PATH paths in the order they are listed until the resulting file is found in
+  the machine filesystem. The first match is used.<br>
+  SYMBOL INSERTION (ie when drawing a schematic and inserting a component):<br>
+  The relative symbol reference that is saved in the schematic file is obtained by removing the first occurrence
+  of a matching path prefix
+  from the ones listed in <kbd>XSCHEM_LIBRARY_PATH</kbd> in the order they are listed. The first matching prefix
+  is used to determine the relative symbol reference. </strong> This is the reason deepest path elements must be
+  listed first in XSCHEM_LIBRARY_PATH if you want the shortest possible symbol relative reference to be saved in
+  the schematic file.
+ </p>
+
+ <p>
+  For VLSI / big designs I <b>strongly</b> suggest using the second approach,
+  just as an example i have the following dirs:
+ </p>
+ <pre class="code">
+  ~/share/xschem/xschem_library/
+    containing:
+    devices/
+    TECHLIB/
+  
+  ~/xschem_library/
+    containing:
+    stdcell_stef/
+  
+  ~/share/doc/xschem/
+    containing:
+    library_t9/
+    dram/
+ </pre>
+  
+ <p>
+  then in my xschemrc i have the following:
+ </p>
+ <p>
+  <kbd>set XSCHEM_LIBRARY_PATH \ <br>
+  $env(HOME)/share/xschem/xschem_library:$env(HOME)/share/doc/xschem/:$env(HOME)/xschem_library</kbd><br>
+ </p>
+ <h3>
+  You may choose either method, but please be consistent throughout your design.
+ </h3>
+
+ <h1> Change project setup runtime</h1>
+ <p>
+  Since Xschem now handles multiple windows or tabs, it is desirasble to load schematics from different projects
+  into a single running instance of xschem.
+  This is not difficult to do and you might want to write your own procedure into your xschemrc to automate this.
+  Lets suppose you open a new schematic tab. After opening the new tab go to the xschem prompt in the terminal 
+  you launched Xschem from, and redefine your XSCHEM_LIBRARY_PATH:</p>
+ <pre class="code">
+    set XSCHEM_LIBRARY_PATH {} ;# clear previous definitions
+    append XSCHEM_LIBRARY_PATH :${XSCHEM_SHAREDIR}/xschem_library  ;# for devices/
+    append XSCHEM_LIBRARY_PATH :/home/schippes/share/pdk/sky130A/libs.tech/xschem ;# for sky130 libs
+    # project specific variables (either tcl variables or shell variables via the TCL env() array)
+    set PDK_ROOT /home/schippes/share/pdk
+    set PDK sky130A
+    set SKYWATER_MODELS ${PDK_ROOT}/${PDK}/libs.tech/ngspice
+    set SKYWATER_STDCELLS ${PDK_ROOT}/${PDK}/libs.ref/sky130_fd_sc_hd/spice
+ </pre>
+ <p>
+  At this point your new tab will work with the new defnitions while the previous tab
+  will continue with its previous settings.
+ </p>
+ <p class="important">
+  you should create a small procedure and put int into your xschemrc so you will just need to type the 
+  procedure name:
+ </p><br>
+ <pre class="code">
+  proc set_sky130 {} {
+      ## XSCHEM_SHAREDIR points to XSCHEM install path, example: /usr/local/share/xschem
+      ## USER_CONF_DIR is usually ~/.xschem
+      ## env may be used to set environment variables, like:
+      ## set env(PDK_ROOT) .....
+      global XSCHEM_LIBRARY_PATH XSCHEM_SHAREDIR USER_CONF_DIR env
+      ## Other global TCL variables listed here depend on the project setup.
+      global PDK_ROOT PDK SKYWATER_MODELS SKYWATER_STDCELLS
+
+      # project specific variables (either tcl variables or shell variables via the TCL env() array)
+      set PDK_ROOT /home/schippes/share/pdk
+      set PDK sky130A
+      set SKYWATER_MODELS ${PDK_ROOT}/${PDK}/libs.tech/ngspice
+      set SKYWATER_STDCELLS ${PDK_ROOT}/${PDK}/libs.ref/sky130_fd_sc_hd/spice
+
+      set XSCHEM_LIBRARY_PATH {} ;# clear previous definitions
+      append XSCHEM_LIBRARY_PATH :${XSCHEM_SHAREDIR}/xschem_library  ;# for devices/
+      append XSCHEM_LIBRARY_PATH :${PDK_ROOT}/${PDK}/libs.tech/xschem
+  }
+ </pre>
+
+ <!-- end of slide -->
+ <div class="filler"></div>
+</div>
+
+<!-- frame footer -->
+<iframe seamless src="xschem_footer.html"  class="footer_iframe" >
+</body>
+</html>
+
