@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -14,6 +13,7 @@
 #include <unordered_set>
 #include <vector>
 #include <iomanip>
+#include <limits>
 #include <thread>
 #include <chrono>
 
@@ -238,6 +238,8 @@ CircuitSimulator* CircuitSimulator::instance = nullptr;
 // Callback functions for ngspice
 // Streams ngspice console output to Godot and an exposed signal.
 static int ng_send_char(char *output, int id, void *user_data) {
+    (void)id;
+    (void)user_data;
     if (CircuitSimulator::instance) {
         CircuitSimulator::instance->emit_signal("ngspice_output", String(output));
     }
@@ -247,18 +249,29 @@ static int ng_send_char(char *output, int id, void *user_data) {
 
 // Receives status updates from ngspice (currently ignored).
 static int ng_send_stat(char *status, int id, void *user_data) {
+    (void)status;
+    (void)id;
+    (void)user_data;
     // Status updates during simulation
     return 0;
 }
 
 // Handles ngspice shutdown callback notifications.
 static int ng_controlled_exit(int status, bool immediate, bool exit_on_quit, int id, void *user_data) {
+    (void)status;
+    (void)immediate;
+    (void)exit_on_quit;
+    (void)id;
+    (void)user_data;
     UtilityFunctions::print("ngspice exit requested");
     return 0;
 }
 
 // Publishes streamed simulation samples while ngspice runs.
 static int ng_send_data(pvecvaluesall data, int count, int id, void *user_data) {
+    (void)count;
+    (void)id;
+    (void)user_data;
     // Called during simulation with new data points
     if (CircuitSimulator::instance) {
         Dictionary dict;
@@ -273,6 +286,8 @@ static int ng_send_data(pvecvaluesall data, int count, int id, void *user_data) 
 
 // Receives vector metadata once a simulation is initialized.
 static int ng_send_init_data(pvecinfoall data, int id, void *user_data) {
+    (void)id;
+    (void)user_data;
     // Called before simulation with vector info
     UtilityFunctions::print(String("Simulation initialized with ") + String::num_int64(data->veccount) + " vectors");
     return 0;
@@ -280,6 +295,8 @@ static int ng_send_init_data(pvecinfoall data, int id, void *user_data) {
 
 // Emits lifecycle signals when the ngspice background thread starts/stops.
 static int ng_bg_thread_running(bool running, int id, void *user_data) {
+    (void)id;
+    (void)user_data;
     if (CircuitSimulator::instance) {
         if (running) {
             CircuitSimulator::instance->emit_signal("simulation_started");
@@ -293,8 +310,22 @@ static int ng_bg_thread_running(bool running, int id, void *user_data) {
 // Callback for interactive voltage source control
 // Supplies interactive voltage source values requested by ngspice.
 static int ng_get_vsrc_data(double *voltage, double time, char *node_name, int id, void *user_data) {
+    (void)time;
+    (void)id;
+    (void)user_data;
     if (CircuitSimulator::instance) {
-        *voltage = CircuitSimulator::instance->get_voltage_source(String(node_name));
+        *voltage = CircuitSimulator::instance->get_external_value(String(node_name));
+    }
+    return 0;
+}
+
+// Callback for interactive current source control.
+static int ng_get_isrc_data(double *current, double time, char *node_name, int id, void *user_data) {
+    (void)time;
+    (void)id;
+    (void)user_data;
+    if (CircuitSimulator::instance) {
+        *current = CircuitSimulator::instance->get_external_value(String(node_name));
     }
     return 0;
 }
@@ -339,7 +370,18 @@ void CircuitSimulator::_bind_methods() {
     // Interactive control
     ClassDB::bind_method(D_METHOD("set_voltage_source", "source_name", "voltage"), &CircuitSimulator::set_voltage_source);
     ClassDB::bind_method(D_METHOD("get_voltage_source", "source_name"), &CircuitSimulator::get_voltage_source);
-    ClassDB::bind_method(D_METHOD("set_parameter", "name", "value"), &CircuitSimulator::set_parameter);
+    ClassDB::bind_method(D_METHOD("set_external_value", "name", "value"), &CircuitSimulator::set_external_value);
+    ClassDB::bind_method(D_METHOD("get_external_value", "name"), &CircuitSimulator::get_external_value);
+    ClassDB::bind_method(D_METHOD("set_external_values", "values"), &CircuitSimulator::set_external_values);
+    ClassDB::bind_method(D_METHOD("set_switch_state", "name", "closed"), &CircuitSimulator::set_switch_state);
+    ClassDB::bind_method(
+        D_METHOD("configure_continuous_csv_export", "csv_path", "signals"),
+        &CircuitSimulator::configure_continuous_csv_export,
+        DEFVAL(PackedStringArray())
+    );
+    ClassDB::bind_method(D_METHOD("disable_continuous_csv_export"), &CircuitSimulator::disable_continuous_csv_export);
+    ClassDB::bind_method(D_METHOD("is_continuous_csv_export_enabled"), &CircuitSimulator::is_continuous_csv_export_enabled);
+    ClassDB::bind_method(D_METHOD("get_continuous_csv_export_path"), &CircuitSimulator::get_continuous_csv_export_path);
 
     // Signals
     ADD_SIGNAL(MethodInfo("simulation_started"));
@@ -349,6 +391,7 @@ void CircuitSimulator::_bind_methods() {
     ADD_SIGNAL(MethodInfo("continuous_transient_started"));
     ADD_SIGNAL(MethodInfo("continuous_transient_stopped"));
     ADD_SIGNAL(MethodInfo("continuous_transient_frame", PropertyInfo(Variant::DICTIONARY, "frame")));
+    ADD_SIGNAL(MethodInfo("continuous_csv_export_error", PropertyInfo(Variant::STRING, "message")));
 }
 
 // Initializes simulator state and ngspice function pointers.
@@ -361,7 +404,6 @@ CircuitSimulator::CircuitSimulator() {
     ng_Command = nullptr;
     ng_GetVecInfo = nullptr;
     ng_CurPlot = nullptr;
-    ng_AllPlots = nullptr;
     ng_AllVecs = nullptr;
     ng_Circ = nullptr;
     ng_Running = nullptr;
@@ -371,12 +413,16 @@ CircuitSimulator::CircuitSimulator() {
     continuous_window = 0.0;
     continuous_next_start.store(0.0);
     continuous_sleep_ms = 25;
+    csv_export_enabled = false;
+    csv_export_path = "";
+    csv_last_export_time = -std::numeric_limits<double>::infinity();
     instance = this;
 }
 
 // Stops worker threads and releases ngspice resources.
 CircuitSimulator::~CircuitSimulator() {
     stop_continuous_thread();
+    disable_continuous_csv_export();
     if (initialized) {
         shutdown_ngspice();
     }
@@ -408,8 +454,6 @@ bool CircuitSimulator::load_ngspice_library() {
         GetProcAddress(ngspice_handle, "ngGet_Vec_Info");
     ng_CurPlot = (char* (*)())
         GetProcAddress(ngspice_handle, "ngSpice_CurPlot");
-    ng_AllPlots = (char** (*)())
-        GetProcAddress(ngspice_handle, "ngSpice_AllPlots");
     ng_AllVecs = (char** (*)(char*))
         GetProcAddress(ngspice_handle, "ngSpice_AllVecs");
     ng_Circ = (int (*)(char**))
@@ -481,8 +525,6 @@ bool CircuitSimulator::load_ngspice_library() {
         dlsym(ngspice_handle, "ngGet_Vec_Info");
     ng_CurPlot = (char* (*)())
         dlsym(ngspice_handle, "ngSpice_CurPlot");
-    ng_AllPlots = (char** (*)())
-        dlsym(ngspice_handle, "ngSpice_AllPlots");
     ng_AllVecs = (char** (*)(char*))
         dlsym(ngspice_handle, "ngSpice_AllVecs");
     ng_Circ = (int (*)(char**))
@@ -544,7 +586,7 @@ bool CircuitSimulator::initialize_ngspice() {
 
     // Set up voltage source callback for interactive control
     if (ng_Init_Sync) {
-        ng_Init_Sync(ng_get_vsrc_data, nullptr, nullptr, nullptr, this);
+        ng_Init_Sync(ng_get_vsrc_data, ng_get_isrc_data, nullptr, nullptr, this);
     }
 
     initialized = true;
@@ -555,6 +597,7 @@ bool CircuitSimulator::initialize_ngspice() {
 // Stops activity and tears down embedded ngspice safely.
 void CircuitSimulator::shutdown_ngspice() {
     stop_continuous_thread();
+    disable_continuous_csv_export();
 
     if (!initialized) {
         return;
@@ -921,6 +964,10 @@ bool CircuitSimulator::start_continuous_transient(double step, double window, in
             frame["chunk_start"] = chunk_start;
             frame["chunk_stop"] = chunk_stop;
             frame["step"] = continuous_step;
+            if (!append_csv_rows(frame)) {
+                emit_signal("continuous_csv_export_error", "Failed to append CSV rows");
+                break;
+            }
             emit_signal("continuous_transient_frame", frame);
 
             continuous_next_start.store(chunk_stop);
@@ -931,6 +978,78 @@ bool CircuitSimulator::start_continuous_transient(double step, double window, in
         emit_signal("continuous_transient_stopped");
     });
 
+    return true;
+}
+
+// Exports one rolling frame to CSV as (time, signal, value) rows.
+bool CircuitSimulator::append_csv_rows(const Dictionary &vectors) {
+    std::lock_guard<std::mutex> lock(csv_mutex);
+    if (!csv_export_enabled || !csv_stream.is_open()) {
+        return true;
+    }
+    if (!vectors.has("time")) {
+        return true;
+    }
+
+    Array time_values = vectors["time"];
+    if (time_values.is_empty()) {
+        return true;
+    }
+
+    PackedStringArray signal_names;
+    if (!csv_signal_filter.is_empty()) {
+        signal_names = csv_signal_filter;
+    } else {
+        Array keys = vectors.keys();
+        for (int i = 0; i < keys.size(); i++) {
+            String key = keys[i];
+            if (key == "time" || key == "chunk_start" || key == "chunk_stop" || key == "step") {
+                continue;
+            }
+            Variant value = vectors[key];
+            if (value.get_type() == Variant::ARRAY) {
+                signal_names.append(key);
+            }
+        }
+    }
+
+    for (int i = 0; i < time_values.size(); i++) {
+        const double t = static_cast<double>(time_values[i]);
+        if (t <= csv_last_export_time) {
+            continue;
+        }
+
+        for (int j = 0; j < signal_names.size(); j++) {
+            const String &signal = signal_names[j];
+            if (!vectors.has(signal)) {
+                continue;
+            }
+
+            Array signal_values = vectors[signal];
+            if (i >= signal_values.size()) {
+                continue;
+            }
+
+            Variant sample = signal_values[i];
+            if (sample.get_type() != Variant::FLOAT && sample.get_type() != Variant::INT) {
+                continue;
+            }
+
+            csv_stream << std::setprecision(16) << t
+                       << "," << std::string(signal.utf8().get_data())
+                       << "," << static_cast<double>(sample)
+                       << "\n";
+        }
+
+        csv_last_export_time = t;
+    }
+
+    if (!csv_stream.good()) {
+        csv_export_enabled = false;
+        return false;
+    }
+
+    csv_stream.flush();
     return true;
 }
 
@@ -1082,37 +1201,99 @@ PackedStringArray CircuitSimulator::get_all_vector_names() {
 
 // Sets an interactive voltage source override value.
 void CircuitSimulator::set_voltage_source(const String &source_name, double voltage) {
-    voltage_sources[source_name] = voltage;
-    UtilityFunctions::print("Set " + source_name + " to " + String::num(voltage) + "V");
+    set_external_value(source_name, voltage);
+    UtilityFunctions::print("Set " + source_name + " to " + String::num(voltage) + " (external)");
 }
 
 // Returns the latest interactive voltage source value.
 double CircuitSimulator::get_voltage_source(const String &source_name) {
-    if (voltage_sources.has(source_name)) {
-        return (double)voltage_sources[source_name];
+    return get_external_value(source_name);
+}
+
+// Sets a named external source value for ngspice sync callbacks.
+void CircuitSimulator::set_external_value(const String &name, double value) {
+    std::lock_guard<std::mutex> lock(voltage_sources_mutex);
+    voltage_sources[name] = value;
+}
+
+// Returns the latest named external source value.
+double CircuitSimulator::get_external_value(const String &name) {
+    std::lock_guard<std::mutex> lock(voltage_sources_mutex);
+    if (voltage_sources.has(name)) {
+        return static_cast<double>(voltage_sources[name]);
     }
     return 0.0;
 }
 
-// Updates a .param value and resets ngspice state.
-bool CircuitSimulator::set_parameter(const String &name, double value) {
-    if (!initialized || !ng_Command) {
+// Bulk update for external values to reduce script call overhead.
+void CircuitSimulator::set_external_values(const Dictionary &values) {
+    std::lock_guard<std::mutex> lock(voltage_sources_mutex);
+    Array keys = values.keys();
+    for (int i = 0; i < keys.size(); i++) {
+        String key = keys[i];
+        Variant value = values[key];
+        if (value.get_type() == Variant::FLOAT || value.get_type() == Variant::INT) {
+            voltage_sources[key] = static_cast<double>(value);
+        }
+    }
+}
+
+// Helper for switch controls that map to binary external values.
+void CircuitSimulator::set_switch_state(const String &name, bool closed) {
+    set_external_value(name, closed ? 1.0 : 0.0);
+}
+
+// Configures CSV export path and optional vector filter for continuous mode.
+bool CircuitSimulator::configure_continuous_csv_export(const String &csv_path, const PackedStringArray &signals) {
+    if (csv_path.is_empty()) {
         return false;
     }
 
-    CharString name_utf8 = name.utf8();
-    std::string command = "alterparam ";
-    command += name_utf8.get_data();
-    command += "=";
-    std::ostringstream value_stream;
-    value_stream << std::setprecision(12) << value;
-    command += value_stream.str();
-    std::lock_guard<std::mutex> lock(ng_command_mutex);
-    int alter_ret = ng_Command((char *)command.c_str());
-    if (alter_ret != 0) {
+    CharString path_utf8 = csv_path.utf8();
+    fs::path out_path(path_utf8.get_data());
+    out_path = fs::absolute(out_path).lexically_normal();
+
+    std::error_code ec;
+    fs::create_directories(out_path.parent_path(), ec);
+
+    std::lock_guard<std::mutex> lock(csv_mutex);
+    if (csv_stream.is_open()) {
+        csv_stream.close();
+    }
+
+    csv_stream.open(out_path, std::ios::out | std::ios::trunc);
+    if (!csv_stream.is_open()) {
+        csv_export_enabled = false;
         return false;
     }
 
-    int reset_ret = ng_Command((char *)"reset");
-    return reset_ret == 0;
+    csv_stream << "time,signal,value\n";
+    csv_stream.flush();
+    csv_export_enabled = true;
+    csv_export_path = String(out_path.string().c_str());
+    csv_signal_filter = signals;
+    csv_last_export_time = -std::numeric_limits<double>::infinity();
+    return true;
+}
+
+// Stops CSV export and closes the file handle.
+void CircuitSimulator::disable_continuous_csv_export() {
+    std::lock_guard<std::mutex> lock(csv_mutex);
+    csv_export_enabled = false;
+    csv_signal_filter.clear();
+    csv_export_path = "";
+    csv_last_export_time = -std::numeric_limits<double>::infinity();
+    if (csv_stream.is_open()) {
+        csv_stream.close();
+    }
+}
+
+// Returns whether continuous CSV export is currently active.
+bool CircuitSimulator::is_continuous_csv_export_enabled() const {
+    return csv_export_enabled;
+}
+
+// Returns the active CSV export file path.
+String CircuitSimulator::get_continuous_csv_export_path() const {
+    return csv_export_path;
 }

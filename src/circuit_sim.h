@@ -7,6 +7,7 @@
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <atomic>
+#include <fstream>
 #include <mutex>
 #include <thread>
 
@@ -40,7 +41,6 @@ private:
     int (*ng_Command)(char*);
     pvector_info (*ng_GetVecInfo)(char*);
     char* (*ng_CurPlot)();
-    char** (*ng_AllPlots)();
     char** (*ng_AllVecs)(char*);
     int (*ng_Circ)(char**);
     bool (*ng_Running)();
@@ -52,6 +52,7 @@ private:
 
     // Voltage source values for interactive control
     Dictionary voltage_sources;
+    std::mutex voltage_sources_mutex;
     std::mutex ng_command_mutex;
 
     // Continuous transient loop state.
@@ -63,6 +64,15 @@ private:
     std::atomic<double> continuous_next_start;
     int64_t continuous_sleep_ms;
     void stop_continuous_thread();
+    bool append_csv_rows(const Dictionary &vectors);
+
+    // Optional CSV export for continuous transient snapshots.
+    std::ofstream csv_stream;
+    std::atomic<bool> csv_export_enabled;
+    String csv_export_path;
+    PackedStringArray csv_signal_filter;
+    double csv_last_export_time;
+    std::mutex csv_mutex;
 
 protected:
     static void _bind_methods();
@@ -105,8 +115,15 @@ public:
     // Interactive control (for switches)
     void set_voltage_source(const String &source_name, double voltage);
     double get_voltage_source(const String &source_name);
+    void set_external_value(const String &name, double value);
+    double get_external_value(const String &name);
+    void set_external_values(const Dictionary &values);
+    void set_switch_state(const String &name, bool closed);
 
-    bool set_parameter(const String &name, double value);
+    bool configure_continuous_csv_export(const String &csv_path, const PackedStringArray &signals = PackedStringArray());
+    void disable_continuous_csv_export();
+    bool is_continuous_csv_export_enabled() const;
+    String get_continuous_csv_export_path() const;
 
     // Static instance for callbacks
     static CircuitSimulator* instance;

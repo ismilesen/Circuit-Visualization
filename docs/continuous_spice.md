@@ -10,8 +10,8 @@ Separate simulation clock from render clock
 Keep simulation updates on a timer (Timer node or worker loop).
 Keep visual updates in _process.
 Never block frame rendering waiting for ngspice.
-For modulation, update sources/params between chunks
-Use your existing methods (set_voltage_source, set_parameter) before each next chunk.
+For modulation, update external sources between chunks
+Use external source methods (set_voltage_source/set_external_value/set_external_values) before each next chunk.
 This enables LFO-like modulation, envelope control, and interactive knobs.
 Add fallback “fake continuous” mode
 If ngspice can’t keep up, loop the most recent stable waveform and blend into fresh data when it arrives.

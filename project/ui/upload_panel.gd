@@ -5,6 +5,9 @@ extends Control
 @export var continuous_step: float = 1e-11
 @export var continuous_window: float = 2e-8
 @export var continuous_sleep_ms: int = 25
+@export var continuous_csv_enabled: bool = true
+@export var continuous_csv_path: String = "user://uploads/continuous_trace.csv"
+@export var continuous_csv_signals: PackedStringArray = PackedStringArray()
 const UPLOAD_DIR := "user://uploads"
 
 var NETLIST_EXTS: PackedStringArray = PackedStringArray(["spice", "cir", "net", "txt"])
@@ -313,6 +316,8 @@ func _on_run_pressed() -> void:
 		_sim.connect("continuous_transient_started", Callable(self, "_on_continuous_started"))
 		_sim.connect("continuous_transient_stopped", Callable(self, "_on_continuous_stopped"))
 		_sim.connect("continuous_transient_frame", Callable(self, "_on_continuous_frame"))
+		if _sim.has_signal("continuous_csv_export_error"):
+			_sim.connect("continuous_csv_export_error", Callable(self, "_on_continuous_csv_export_error"))
 		_continuous_signal_connected = true
 
 	_refresh_status("native: initializing ngspice…", StatusTone.WARN)
@@ -344,6 +349,7 @@ func _on_run_pressed() -> void:
 		_log("[color=lime]Simulation complete.[/color] Result keys: %s" % [str(result_dict.keys())])
 
 		if auto_start_continuous and _sim.has_method("start_continuous_transient"):
+			_configure_csv_export_if_enabled()
 			var started: bool = bool(_sim.call("start_continuous_transient", continuous_step, continuous_window, continuous_sleep_ms))
 			if started:
 				_refresh_status("native: continuous transient started", StatusTone.OK)
@@ -354,6 +360,7 @@ func _on_run_pressed() -> void:
 	# Fallback for older simulator builds that don't expose run_spice_file.
 	_sim.call("load_netlist", os_path)
 	if auto_start_continuous and _sim.has_method("start_continuous_transient"):
+		_configure_csv_export_if_enabled()
 		var fallback_started: bool = bool(_sim.call("start_continuous_transient", continuous_step, continuous_window, continuous_sleep_ms))
 		if fallback_started:
 			_refresh_status("native: continuous transient started", StatusTone.OK)
@@ -377,6 +384,8 @@ func _on_continuous_pressed() -> void:
 
 	if bool(_sim.call("is_continuous_transient_running")):
 		_sim.call("stop_continuous_transient")
+		if _sim.has_method("disable_continuous_csv_export"):
+			_sim.call("disable_continuous_csv_export")
 		_refresh_status("native: stopping continuous transient…", StatusTone.WARN)
 		return
 
@@ -387,6 +396,7 @@ func _on_continuous_pressed() -> void:
 
 	if bool(_sim.call("is_continuous_transient_running")):
 		return
+	_configure_csv_export_if_enabled()
 	var started: bool = bool(_sim.call("start_continuous_transient", continuous_step, continuous_window, continuous_sleep_ms))
 	if not started:
 		_set_error("Failed to start continuous transient loop.")
@@ -407,6 +417,10 @@ func _on_continuous_stopped() -> void:
 # Defers per-frame continuous UI updates to the main thread.
 func _on_continuous_frame(frame: Dictionary) -> void:
 	call_deferred("_apply_continuous_frame_ui", frame)
+
+# Defers CSV error handling to the main thread.
+func _on_continuous_csv_export_error(message: String) -> void:
+	call_deferred("_apply_continuous_csv_export_error_ui", message)
 
 # Applies UI state when continuous mode starts.
 func _apply_continuous_started_ui() -> void:
@@ -436,6 +450,10 @@ func _apply_continuous_frame_ui(frame: Dictionary) -> void:
 		StatusTone.OK
 	)
 
+# Applies UI state when CSV export fails.
+func _apply_continuous_csv_export_error_ui(message: String) -> void:
+	_set_error("continuous CSV export error: %s" % message)
+
 # -------------------------------------------------------------------
 # Clear staging
 # -------------------------------------------------------------------
@@ -444,6 +462,8 @@ func _apply_continuous_frame_ui(frame: Dictionary) -> void:
 func _on_clear_pressed() -> void:
 	if _sim != null and _sim.has_method("is_continuous_transient_running") and bool(_sim.call("is_continuous_transient_running")):
 		_sim.call("stop_continuous_transient")
+	if _sim != null and _sim.has_method("disable_continuous_csv_export"):
+		_sim.call("disable_continuous_csv_export")
 	staged.clear()
 	if staged_list != null:
 		staged_list.clear()
@@ -454,6 +474,22 @@ func _on_clear_pressed() -> void:
 	if continuous_button != null:
 		continuous_button.text = "Start Continuous"
 	_refresh_status("staging cleared", StatusTone.WARN)
+
+# Configures CSV output for continuous transient stream.
+func _configure_csv_export_if_enabled() -> void:
+	if not continuous_csv_enabled:
+		if _sim != null and _sim.has_method("disable_continuous_csv_export"):
+			_sim.call("disable_continuous_csv_export")
+		return
+	if _sim == null or not _sim.has_method("configure_continuous_csv_export"):
+		return
+
+	var absolute_path: String = ProjectSettings.globalize_path(continuous_csv_path)
+	var ok: bool = bool(_sim.call("configure_continuous_csv_export", absolute_path, continuous_csv_signals))
+	if not ok:
+		_set_error("Failed to configure CSV export at %s" % absolute_path)
+	else:
+		_log("[color=lightblue]CSV export:[/color] %s" % absolute_path)
 
 # -------------------------------------------------------------------
 # Helpers
