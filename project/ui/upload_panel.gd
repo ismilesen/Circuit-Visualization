@@ -5,6 +5,10 @@ extends Control
 @export var continuous_step: float = 1e-11
 @export var continuous_window: float = 2e-8
 @export var continuous_sleep_ms: int = 25
+@export var continuous_memory_enabled: bool = true
+@export var continuous_memory_signals: PackedStringArray = PackedStringArray()
+@export var continuous_memory_max_samples: int = 10000
+@export var continuous_memory_pop_count: int = 256
 @export var continuous_csv_enabled: bool = true
 @export var continuous_csv_path: String = "user://uploads/continuous_trace.csv"
 @export var continuous_csv_signals: PackedStringArray = PackedStringArray()
@@ -34,6 +38,7 @@ var _sim_signal_connected: bool = false
 var _continuous_signal_connected: bool = false
 var _sim: Node = null
 var _continuous_frame_count: int = 0
+var _using_memory_buffer: bool = false
 
 # --- Aesthetic theme state (light, “Microsoft-esque”) ---
 var _t: Theme = null
@@ -330,18 +335,18 @@ func _on_run_pressed() -> void:
 	var godot_path: String = str(entry["user_path"]) # user://uploads/...
 	var os_path: String = ProjectSettings.globalize_path(godot_path)
 
-	# Prefer the normalized SPICE pipeline for uploaded decks.
+	# Prefer the normalized netlist pipeline for uploaded decks.
 	# It avoids .control/quit side-effects and handles include/path normalization.
-	if _sim.has_method("run_spice_file"):
+	if _sim.has_method("load_netlist"):
 		_refresh_status("native: running spice pipeline…", StatusTone.WARN)
-		var run_result: Variant = _sim.call("run_spice_file", os_path, "")
+		var run_result: Variant = _sim.call("load_netlist", os_path, "")
 		if typeof(run_result) != TYPE_DICTIONARY:
-			_set_error("run_spice_file() returned unexpected result.")
+			_set_error("load_netlist() returned unexpected result.")
 			return
 
 		var result_dict: Dictionary = run_result as Dictionary
 		if result_dict.is_empty():
-			_set_error("run_spice_file() returned no data. Check ngspice output for deck errors.")
+			_set_error("load_netlist() returned no data. Check ngspice output for deck errors.")
 			return
 
 		var key_count: int = result_dict.keys().size()
@@ -349,7 +354,7 @@ func _on_run_pressed() -> void:
 		_log("[color=lime]Simulation complete.[/color] Result keys: %s" % [str(result_dict.keys())])
 
 		if auto_start_continuous and _sim.has_method("start_continuous_transient"):
-			_configure_csv_export_if_enabled()
+			_configure_stream_output_if_enabled()
 			var started: bool = bool(_sim.call("start_continuous_transient", continuous_step, continuous_window, continuous_sleep_ms))
 			if started:
 				_refresh_status("native: continuous transient started", StatusTone.OK)
@@ -357,16 +362,7 @@ func _on_run_pressed() -> void:
 				_set_error("Failed to start continuous transient loop.")
 		return
 
-	# Fallback for older simulator builds that don't expose run_spice_file.
-	_sim.call("load_netlist", os_path)
-	if auto_start_continuous and _sim.has_method("start_continuous_transient"):
-		_configure_csv_export_if_enabled()
-		var fallback_started: bool = bool(_sim.call("start_continuous_transient", continuous_step, continuous_window, continuous_sleep_ms))
-		if fallback_started:
-			_refresh_status("native: continuous transient started", StatusTone.OK)
-			return
-	_refresh_status("native: running simulation…", StatusTone.WARN)
-	_sim.call("run_simulation")
+	_set_error("CircuitSimulator build does not expose load_netlist().")
 
 # Toggles continuous transient mode for the loaded netlist.
 func _on_continuous_pressed() -> void:
@@ -384,19 +380,22 @@ func _on_continuous_pressed() -> void:
 
 	if bool(_sim.call("is_continuous_transient_running")):
 		_sim.call("stop_continuous_transient")
+		if _sim.has_method("clear_continuous_memory_buffer"):
+			_sim.call("clear_continuous_memory_buffer")
 		if _sim.has_method("disable_continuous_csv_export"):
 			_sim.call("disable_continuous_csv_export")
+		_using_memory_buffer = false
 		_refresh_status("native: stopping continuous transient…", StatusTone.WARN)
 		return
 
-	# Ensure a deck is loaded before starting continuous chunks.
+	# Ensure a deck is loaded before starting continuous streaming.
 	_on_run_pressed()
 	if _sim == null:
 		return
 
 	if bool(_sim.call("is_continuous_transient_running")):
 		return
-	_configure_csv_export_if_enabled()
+	_configure_stream_output_if_enabled()
 	var started: bool = bool(_sim.call("start_continuous_transient", continuous_step, continuous_window, continuous_sleep_ms))
 	if not started:
 		_set_error("Failed to start continuous transient loop.")
@@ -437,16 +436,22 @@ func _apply_continuous_stopped_ui() -> void:
 	_refresh_status("native: continuous transient stopped", StatusTone.WARN)
 	_log("[color=yellow]Continuous transient stopped.[/color]")
 
-# Updates status text periodically while streaming continuous frames.
+# Updates status text periodically while streaming callback-driven frames.
 func _apply_continuous_frame_ui(frame: Dictionary) -> void:
 	_continuous_frame_count += 1
 	if _continuous_frame_count % 10 != 0:
 		return
 
-	var chunk_start: float = float(frame.get("chunk_start", 0.0))
-	var chunk_stop: float = float(frame.get("chunk_stop", 0.0))
+	var sample_count: int = int(frame.get("sample_count", 0))
+	var sim_time: float = float(frame.get("time", 0.0))
+	var memory_count: int = -1
+	if _using_memory_buffer and _sim != null and _sim.has_method("get_continuous_memory_sample_count"):
+		memory_count = int(_sim.call("get_continuous_memory_sample_count"))
+	var suffix: String = ""
+	if memory_count >= 0:
+		suffix = " | RAM samples: %d" % memory_count
 	_refresh_status(
-		"native: continuous chunk %d (%.3e → %.3e s)" % [_continuous_frame_count, chunk_start, chunk_stop],
+		"native: continuous stream frame %d (samples=%d, t=%.3e s)%s" % [_continuous_frame_count, sample_count, sim_time, suffix],
 		StatusTone.OK
 	)
 
@@ -462,8 +467,11 @@ func _apply_continuous_csv_export_error_ui(message: String) -> void:
 func _on_clear_pressed() -> void:
 	if _sim != null and _sim.has_method("is_continuous_transient_running") and bool(_sim.call("is_continuous_transient_running")):
 		_sim.call("stop_continuous_transient")
+	if _sim != null and _sim.has_method("clear_continuous_memory_buffer"):
+		_sim.call("clear_continuous_memory_buffer")
 	if _sim != null and _sim.has_method("disable_continuous_csv_export"):
 		_sim.call("disable_continuous_csv_export")
+	_using_memory_buffer = false
 	staged.clear()
 	if staged_list != null:
 		staged_list.clear()
@@ -491,6 +499,31 @@ func _configure_csv_export_if_enabled() -> void:
 	else:
 		_log("[color=lightblue]CSV export:[/color] %s" % absolute_path)
 
+# Prefer in-memory callback buffering; fallback to CSV when unavailable.
+func _configure_stream_output_if_enabled() -> void:
+	_using_memory_buffer = _configure_memory_buffer_if_enabled()
+	if _using_memory_buffer:
+		if _sim != null and _sim.has_method("disable_continuous_csv_export"):
+			_sim.call("disable_continuous_csv_export")
+		return
+	_configure_csv_export_if_enabled()
+
+# Configures callback-driven sample buffering in native RAM.
+func _configure_memory_buffer_if_enabled() -> bool:
+	if not continuous_memory_enabled:
+		return false
+	if _sim == null or not _sim.has_method("configure_continuous_memory_buffer"):
+		return false
+
+	var max_samples: int = maxi(1, continuous_memory_max_samples)
+	var ok: bool = bool(_sim.call("configure_continuous_memory_buffer", continuous_memory_signals, max_samples))
+	if not ok:
+		_set_error("Failed to configure RAM sample buffer.")
+		return false
+
+	_log("[color=lightblue]RAM sample buffer:[/color] max=%d, pop_batch=%d" % [max_samples, maxi(1, continuous_memory_pop_count)])
+	return true
+
 # -------------------------------------------------------------------
 # Helpers
 # -------------------------------------------------------------------
@@ -504,7 +537,7 @@ func _resolve_simulator() -> Node:
 
 	var cur: Node = self
 	while cur != null:
-		if cur.has_method("initialize_ngspice") and cur.has_method("load_netlist") and cur.has_method("run_simulation"):
+		if cur.has_method("initialize_ngspice") and cur.has_method("load_netlist"):
 			return cur
 		cur = cur.get_parent()
 

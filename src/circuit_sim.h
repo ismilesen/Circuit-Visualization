@@ -6,10 +6,16 @@
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/packed_float64_array.hpp>
+#include <godot_cpp/variant/packed_int32_array.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
 #include <atomic>
+#include <cstdint>
+#include <deque>
 #include <fstream>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -37,22 +43,17 @@ private:
 
     // Function pointers for ngspice API
     int (*ng_Init)(SendChar*, SendStat*, ControlledExit*, SendData*, SendInitData*, BGThreadRunning*, void*);
-    int (*ng_Init_Sync)(GetVSRCData*, GetISRCData*, GetSyncData*, int*, void*);
+#ifdef XSPICE
+    int (*ng_Init_Evt)(SendEvtData*, SendInitEvtData*, void*);
+#endif
     int (*ng_Command)(char*);
-    pvector_info (*ng_GetVecInfo)(char*);
-    char* (*ng_CurPlot)();
-    char** (*ng_AllVecs)(char*);
     int (*ng_Circ)(char**);
     bool (*ng_Running)();
 
     // Load ngspice dynamically
     bool load_ngspice_library();
     void unload_ngspice_library();
-    bool run_transient_chunk(double step, double stop, double start);
 
-    // Voltage source values for interactive control
-    Dictionary voltage_sources;
-    std::mutex voltage_sources_mutex;
     std::mutex ng_command_mutex;
 
     // Continuous transient loop state.
@@ -62,9 +63,18 @@ private:
     double continuous_step;
     double continuous_window;
     std::atomic<double> continuous_next_start;
+    std::atomic<double> continuous_last_time;
+    std::atomic<int64_t> continuous_sample_count;
     int64_t continuous_sleep_ms;
+    int64_t continuous_emit_stride;
+    int64_t buffer_stdout_stride;
+    std::atomic<int32_t> callback_time_index;
     void stop_continuous_thread();
-    bool append_csv_rows(const Dictionary &vectors);
+    bool append_csv_sample(const PackedFloat64Array &sample, const PackedStringArray &signal_names, double sample_time);
+    double resolve_callback_time(const PackedFloat64Array &sample) const;
+    void handle_continuous_callback_sample(const PackedFloat64Array &sample);
+    void push_memory_sample(const PackedFloat64Array &sample, int64_t sample_count);
+    void refresh_memory_filter_indices_locked();
 
     // Optional CSV export for continuous transient snapshots.
     std::ofstream csv_stream;
@@ -73,6 +83,16 @@ private:
     PackedStringArray csv_signal_filter;
     double csv_last_export_time;
     std::mutex csv_mutex;
+
+    // Optional in-memory sample buffer for callback-driven animation data.
+    std::deque<PackedFloat64Array> memory_samples;
+    PackedStringArray callback_signal_names;
+    PackedStringArray memory_signal_filter;
+    PackedStringArray memory_signal_names;
+    PackedInt32Array memory_signal_indices;
+    std::atomic<bool> memory_buffer_enabled;
+    int64_t memory_max_samples;
+    mutable std::mutex memory_mutex;
 
 protected:
     static void _bind_methods();
@@ -84,46 +104,28 @@ public:
     // Initialization
     bool initialize_ngspice();
     void shutdown_ngspice();
-    bool is_initialized() const;
 
     // Circuit loading
-    bool load_netlist(const String &netlist_path);
-    bool load_netlist_string(const String &netlist_content);
-    Dictionary run_spice_file(const String &spice_path, const String &pdk_root = "");
-    String get_current_netlist() const;
+    Dictionary load_netlist(const String &netlist_path, const String &pdk_root = "");
 
     // Simulation control
-    bool run_simulation();
-    bool run_transient(double step, double stop, double start = 0.0);
-    bool run_dc(const String &source, double start, double stop, double step);
-    void pause_simulation();
-    void resume_simulation();
-    void stop_simulation();
-    bool is_running() const;
     bool start_continuous_transient(double step, double window, int64_t sleep_ms = 25);
     void stop_continuous_transient();
     bool is_continuous_transient_running() const;
-    Dictionary get_continuous_transient_state() const;
+    PackedStringArray get_continuous_memory_signal_names() const;
 
-    // Data retrieval
-    Array get_voltage(const String &node_name);
-    Array get_current(const String &source_name);
-    Array get_time_vector();
-    Dictionary get_all_vectors();
-    PackedStringArray get_all_vector_names();
+    // Callback ingestion entry points.
+    void ingest_callback_signal_names(const PackedStringArray &signal_names);
+    void ingest_callback_sample(const PackedFloat64Array &sample);
 
-    // Interactive control (for switches)
-    void set_voltage_source(const String &source_name, double voltage);
-    double get_voltage_source(const String &source_name);
-    void set_external_value(const String &name, double value);
-    double get_external_value(const String &name);
-    void set_external_values(const Dictionary &values);
-    void set_switch_state(const String &name, bool closed);
+    bool configure_continuous_memory_buffer(const PackedStringArray &signals = PackedStringArray(), int64_t max_samples = 10000);
+    void clear_continuous_memory_buffer();
+    Array get_continuous_memory_snapshot() const;
+    Array pop_continuous_memory_samples(int64_t count = 256);
+    int64_t get_continuous_memory_sample_count() const;
 
     bool configure_continuous_csv_export(const String &csv_path, const PackedStringArray &signals = PackedStringArray());
     void disable_continuous_csv_export();
-    bool is_continuous_csv_export_enabled() const;
-    String get_continuous_csv_export_path() const;
 
     // Static instance for callbacks
     static CircuitSimulator* instance;
