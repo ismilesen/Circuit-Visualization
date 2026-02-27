@@ -200,7 +200,7 @@ static int ng_send_char(char *output, int id, void *user_data) {
     (void)id;
     (void)user_data;
     if (CircuitSimulator::instance) {
-        CircuitSimulator::instance->emit_signal("ngspice_output", String(output));
+        CircuitSimulator::instance->call_deferred("emit_signal", "ngspice_output", String(output));
     }
     UtilityFunctions::print(String("[ngspice] ") + String(output));
     return 0;
@@ -240,7 +240,7 @@ static int ng_send_data(pvecvaluesall data, int count, int id, void *user_data) 
             sample.set(i, vec->creal);
         }
         CircuitSimulator::instance->ingest_callback_sample(sample);
-        CircuitSimulator::instance->emit_signal("simulation_data_ready", sample);
+        CircuitSimulator::instance->call_deferred("emit_signal", "simulation_data_ready", sample);
     }
     return 0;
 }
@@ -269,7 +269,7 @@ static int ng_send_evt_data(
         event_data["value_type"] = value_type;
         event_data["node_type"] = node_type;
         event_data["more"] = more;
-        CircuitSimulator::instance->emit_signal("simulation_event_data", event_data);
+        CircuitSimulator::instance->call_deferred("emit_signal", "simulation_event_data", event_data);
     }
     return 0;
 }
@@ -322,9 +322,9 @@ static int ng_bg_thread_running(bool running, int id, void *user_data) {
     (void)user_data;
     if (CircuitSimulator::instance) {
         if (running) {
-            CircuitSimulator::instance->emit_signal("simulation_started");
+            CircuitSimulator::instance->call_deferred("emit_signal", "simulation_started");
         } else {
-            CircuitSimulator::instance->emit_signal("simulation_finished");
+            CircuitSimulator::instance->call_deferred("emit_signal", "simulation_finished");
         }
     }
     return 0;
@@ -707,7 +707,7 @@ bool CircuitSimulator::start_continuous_transient(double step, double window, in
     continuous_stop_requested = false;
     continuous_running = true;
 
-    emit_signal("continuous_transient_started");
+    call_deferred("emit_signal", "continuous_transient_started");
 
     continuous_thread = std::thread([this]() {
         bool ok = true;
@@ -742,7 +742,7 @@ bool CircuitSimulator::start_continuous_transient(double step, double window, in
         }
 
         continuous_running = false;
-        emit_signal("continuous_transient_stopped");
+        call_deferred("emit_signal", "continuous_transient_stopped");
     });
 
     return true;
@@ -798,7 +798,7 @@ void CircuitSimulator::handle_continuous_callback_sample(const PackedFloat64Arra
         frame["sample_count"] = sample_count;
         frame["step"] = continuous_step;
         frame["stop"] = continuous_window;
-        emit_signal("continuous_transient_frame", frame);
+        call_deferred("emit_signal", "continuous_transient_frame", frame);
     }
 }
 
