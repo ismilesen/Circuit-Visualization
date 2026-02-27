@@ -9,9 +9,6 @@ extends Control
 @export var continuous_memory_signals: PackedStringArray = PackedStringArray()
 @export var continuous_memory_max_samples: int = 10000
 @export var continuous_memory_pop_count: int = 256
-@export var continuous_csv_enabled: bool = true
-@export var continuous_csv_path: String = "user://uploads/continuous_trace.csv"
-@export var continuous_csv_signals: PackedStringArray = PackedStringArray()
 const UPLOAD_DIR := "user://uploads"
 
 var NETLIST_EXTS: PackedStringArray = PackedStringArray(["spice", "cir", "net", "txt"])
@@ -321,8 +318,6 @@ func _on_run_pressed() -> void:
 		_sim.connect("continuous_transient_started", Callable(self, "_on_continuous_started"))
 		_sim.connect("continuous_transient_stopped", Callable(self, "_on_continuous_stopped"))
 		_sim.connect("continuous_transient_frame", Callable(self, "_on_continuous_frame"))
-		if _sim.has_signal("continuous_csv_export_error"):
-			_sim.connect("continuous_csv_export_error", Callable(self, "_on_continuous_csv_export_error"))
 		_continuous_signal_connected = true
 
 	_refresh_status("native: initializing ngspice…", StatusTone.WARN)
@@ -382,8 +377,6 @@ func _on_continuous_pressed() -> void:
 		_sim.call("stop_continuous_transient")
 		if _sim.has_method("clear_continuous_memory_buffer"):
 			_sim.call("clear_continuous_memory_buffer")
-		if _sim.has_method("disable_continuous_csv_export"):
-			_sim.call("disable_continuous_csv_export")
 		_using_memory_buffer = false
 		_refresh_status("native: stopping continuous transient…", StatusTone.WARN)
 		return
@@ -416,10 +409,6 @@ func _on_continuous_stopped() -> void:
 # Defers per-frame continuous UI updates to the main thread.
 func _on_continuous_frame(frame: Dictionary) -> void:
 	call_deferred("_apply_continuous_frame_ui", frame)
-
-# Defers CSV error handling to the main thread.
-func _on_continuous_csv_export_error(message: String) -> void:
-	call_deferred("_apply_continuous_csv_export_error_ui", message)
 
 # Applies UI state when continuous mode starts.
 func _apply_continuous_started_ui() -> void:
@@ -455,10 +444,6 @@ func _apply_continuous_frame_ui(frame: Dictionary) -> void:
 		StatusTone.OK
 	)
 
-# Applies UI state when CSV export fails.
-func _apply_continuous_csv_export_error_ui(message: String) -> void:
-	_set_error("continuous CSV export error: %s" % message)
-
 # -------------------------------------------------------------------
 # Clear staging
 # -------------------------------------------------------------------
@@ -469,8 +454,6 @@ func _on_clear_pressed() -> void:
 		_sim.call("stop_continuous_transient")
 	if _sim != null and _sim.has_method("clear_continuous_memory_buffer"):
 		_sim.call("clear_continuous_memory_buffer")
-	if _sim != null and _sim.has_method("disable_continuous_csv_export"):
-		_sim.call("disable_continuous_csv_export")
 	_using_memory_buffer = false
 	staged.clear()
 	if staged_list != null:
@@ -483,30 +466,11 @@ func _on_clear_pressed() -> void:
 		continuous_button.text = "Start Continuous"
 	_refresh_status("staging cleared", StatusTone.WARN)
 
-# Configures CSV output for continuous transient stream.
-func _configure_csv_export_if_enabled() -> void:
-	if not continuous_csv_enabled:
-		if _sim != null and _sim.has_method("disable_continuous_csv_export"):
-			_sim.call("disable_continuous_csv_export")
-		return
-	if _sim == null or not _sim.has_method("configure_continuous_csv_export"):
-		return
-
-	var absolute_path: String = ProjectSettings.globalize_path(continuous_csv_path)
-	var ok: bool = bool(_sim.call("configure_continuous_csv_export", absolute_path, continuous_csv_signals))
-	if not ok:
-		_set_error("Failed to configure CSV export at %s" % absolute_path)
-	else:
-		_log("[color=lightblue]CSV export:[/color] %s" % absolute_path)
-
-# Prefer in-memory callback buffering; fallback to CSV when unavailable.
+# Configures callback-driven in-memory buffering for continuous streaming.
 func _configure_stream_output_if_enabled() -> void:
 	_using_memory_buffer = _configure_memory_buffer_if_enabled()
-	if _using_memory_buffer:
-		if _sim != null and _sim.has_method("disable_continuous_csv_export"):
-			_sim.call("disable_continuous_csv_export")
-		return
-	_configure_csv_export_if_enabled()
+	if not _using_memory_buffer:
+		_log("[color=yellow]RAM sample buffer disabled or unavailable.[/color]")
 
 # Configures callback-driven sample buffering in native RAM.
 func _configure_memory_buffer_if_enabled() -> bool:

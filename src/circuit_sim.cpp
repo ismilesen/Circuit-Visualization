@@ -12,7 +12,6 @@
 #include <string>
 #include <vector>
 #include <iomanip>
-#include <limits>
 #include <thread>
 #include <chrono>
 
@@ -359,12 +358,6 @@ void CircuitSimulator::_bind_methods() {
         DEFVAL(int64_t(256))
     );
     ClassDB::bind_method(D_METHOD("get_continuous_memory_sample_count"), &CircuitSimulator::get_continuous_memory_sample_count);
-    ClassDB::bind_method(
-        D_METHOD("configure_continuous_csv_export", "csv_path", "signals"),
-        &CircuitSimulator::configure_continuous_csv_export,
-        DEFVAL(PackedStringArray())
-    );
-    ClassDB::bind_method(D_METHOD("disable_continuous_csv_export"), &CircuitSimulator::disable_continuous_csv_export);
 
     // Signals
     ADD_SIGNAL(MethodInfo("simulation_started"));
@@ -375,7 +368,6 @@ void CircuitSimulator::_bind_methods() {
     ADD_SIGNAL(MethodInfo("continuous_transient_started"));
     ADD_SIGNAL(MethodInfo("continuous_transient_stopped"));
     ADD_SIGNAL(MethodInfo("continuous_transient_frame", PropertyInfo(Variant::DICTIONARY, "frame")));
-    ADD_SIGNAL(MethodInfo("continuous_csv_export_error", PropertyInfo(Variant::STRING, "message")));
 }
 
 // Initializes simulator state and ngspice function pointers.
@@ -401,9 +393,6 @@ CircuitSimulator::CircuitSimulator() {
     continuous_emit_stride = 64;
     buffer_stdout_stride = 10;
     callback_time_index.store(-1);
-    csv_export_enabled = false;
-    csv_export_path = "";
-    csv_last_export_time = -std::numeric_limits<double>::infinity();
     memory_buffer_enabled = false;
     memory_max_samples = 10000;
     instance = this;
@@ -412,7 +401,6 @@ CircuitSimulator::CircuitSimulator() {
 // Stops worker threads and releases ngspice resources.
 CircuitSimulator::~CircuitSimulator() {
     stop_continuous_thread();
-    disable_continuous_csv_export();
     clear_continuous_memory_buffer();
     if (initialized) {
         shutdown_ngspice();
@@ -584,7 +572,6 @@ bool CircuitSimulator::initialize_ngspice() {
 // Stops activity and tears down embedded ngspice safely.
 void CircuitSimulator::shutdown_ngspice() {
     stop_continuous_thread();
-    disable_continuous_csv_export();
     clear_continuous_memory_buffer();
 
     if (!initialized) {
@@ -761,56 +748,6 @@ bool CircuitSimulator::start_continuous_transient(double step, double window, in
     return true;
 }
 
-// Exports callback samples to CSV as (time, signal, value) rows.
-bool CircuitSimulator::append_csv_sample(const PackedFloat64Array &sample, const PackedStringArray &signal_names, double sample_time) {
-    std::lock_guard<std::mutex> lock(csv_mutex);
-    if (!csv_export_enabled || !csv_stream.is_open()) {
-        return true;
-    }
-    if (sample_time <= csv_last_export_time) {
-        return true;
-    }
-
-    for (int i = 0; i < sample.size(); i++) {
-        if (i == callback_time_index.load()) {
-            continue;
-        }
-
-        String signal = i < signal_names.size() ? signal_names[i] : String();
-        if (signal.is_empty()) {
-            signal = "vec_" + String::num_int64(i);
-        }
-
-        if (!csv_signal_filter.is_empty()) {
-            bool selected = false;
-            String lowered = signal.to_lower();
-            for (int f = 0; f < csv_signal_filter.size(); f++) {
-                if (csv_signal_filter[f].to_lower() == lowered) {
-                    selected = true;
-                    break;
-                }
-            }
-            if (!selected) {
-                continue;
-            }
-        }
-
-        csv_stream << std::setprecision(16) << sample_time
-                   << "," << std::string(signal.utf8().get_data())
-                   << "," << sample[i]
-                   << "\n";
-    }
-    csv_last_export_time = sample_time;
-
-    if (!csv_stream.good()) {
-        csv_export_enabled = false;
-        return false;
-    }
-
-    csv_stream.flush();
-    return true;
-}
-
 // Signals and joins the continuous worker thread.
 void CircuitSimulator::stop_continuous_thread() {
     continuous_stop_requested = true;
@@ -846,23 +783,14 @@ double CircuitSimulator::resolve_callback_time(const PackedFloat64Array &sample)
     return continuous_last_time.load() + continuous_step;
 }
 
-// Handles callback sample fanout for memory buffering, CSV, and periodic stream frames.
+// Handles callback sample fanout for memory buffering and periodic stream frames.
 void CircuitSimulator::handle_continuous_callback_sample(const PackedFloat64Array &sample) {
     const int64_t sample_count = continuous_sample_count.fetch_add(1) + 1;
     push_memory_sample(sample, sample_count);
 
-    PackedStringArray signal_names;
-    {
-        std::lock_guard<std::mutex> lock(memory_mutex);
-        signal_names = callback_signal_names;
-    }
-
     const double sample_time = resolve_callback_time(sample);
     continuous_last_time.store(sample_time);
     continuous_next_start.store(sample_time);
-    if (!append_csv_sample(sample, signal_names, sample_time)) {
-        emit_signal("continuous_csv_export_error", "Failed to append CSV rows");
-    }
 
     if (continuous_running.load() && continuous_emit_stride > 0 && (sample_count % continuous_emit_stride == 0)) {
         Dictionary frame;
@@ -1028,49 +956,4 @@ Array CircuitSimulator::pop_continuous_memory_samples(int64_t count) {
 int64_t CircuitSimulator::get_continuous_memory_sample_count() const {
     std::lock_guard<std::mutex> lock(memory_mutex);
     return static_cast<int64_t>(memory_samples.size());
-}
-
-// Configures CSV export path and optional vector filter for continuous mode.
-bool CircuitSimulator::configure_continuous_csv_export(const String &csv_path, const PackedStringArray &signals) {
-    if (csv_path.is_empty()) {
-        return false;
-    }
-
-    CharString path_utf8 = csv_path.utf8();
-    fs::path out_path(path_utf8.get_data());
-    out_path = fs::absolute(out_path).lexically_normal();
-
-    std::error_code ec;
-    fs::create_directories(out_path.parent_path(), ec);
-
-    std::lock_guard<std::mutex> lock(csv_mutex);
-    if (csv_stream.is_open()) {
-        csv_stream.close();
-    }
-
-    csv_stream.open(out_path, std::ios::out | std::ios::trunc);
-    if (!csv_stream.is_open()) {
-        csv_export_enabled = false;
-        return false;
-    }
-
-    csv_stream << "time,signal,value\n";
-    csv_stream.flush();
-    csv_export_enabled = true;
-    csv_export_path = String(out_path.string().c_str());
-    csv_signal_filter = signals;
-    csv_last_export_time = -std::numeric_limits<double>::infinity();
-    return true;
-}
-
-// Stops CSV export and closes the file handle.
-void CircuitSimulator::disable_continuous_csv_export() {
-    std::lock_guard<std::mutex> lock(csv_mutex);
-    csv_export_enabled = false;
-    csv_signal_filter.clear();
-    csv_export_path = "";
-    csv_last_export_time = -std::numeric_limits<double>::infinity();
-    if (csv_stream.is_open()) {
-        csv_stream.close();
-    }
 }

@@ -208,8 +208,6 @@ AVAILABLE METHODS:
     get_continuous_memory_snapshot()  - Read buffered rows (non-destructive)
     pop_continuous_memory_samples(n)  - Read and consume oldest rows
     get_continuous_memory_sample_count() - Current buffered row count
-    configure_continuous_csv_export(path, signals) - Enable CSV streaming output
-    disable_continuous_csv_export()   - Disable CSV streaming output
 
 
 SIGNALS:

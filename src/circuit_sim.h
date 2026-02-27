@@ -12,7 +12,6 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
-#include <fstream>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -70,19 +69,10 @@ private:
     int64_t buffer_stdout_stride;
     std::atomic<int32_t> callback_time_index;
     void stop_continuous_thread();
-    bool append_csv_sample(const PackedFloat64Array &sample, const PackedStringArray &signal_names, double sample_time);
     double resolve_callback_time(const PackedFloat64Array &sample) const;
     void handle_continuous_callback_sample(const PackedFloat64Array &sample);
     void push_memory_sample(const PackedFloat64Array &sample, int64_t sample_count);
     void refresh_memory_filter_indices_locked();
-
-    // Optional CSV export for continuous transient snapshots.
-    std::ofstream csv_stream;
-    std::atomic<bool> csv_export_enabled;
-    String csv_export_path;
-    PackedStringArray csv_signal_filter;
-    double csv_last_export_time;
-    std::mutex csv_mutex;
 
     // Optional in-memory sample buffer for callback-driven animation data.
     std::deque<PackedFloat64Array> memory_samples;
@@ -123,9 +113,6 @@ public:
     Array get_continuous_memory_snapshot() const;
     Array pop_continuous_memory_samples(int64_t count = 256);
     int64_t get_continuous_memory_sample_count() const;
-
-    bool configure_continuous_csv_export(const String &csv_path, const PackedStringArray &signals = PackedStringArray());
-    void disable_continuous_csv_export();
 
     // Static instance for callbacks
     static CircuitSimulator* instance;
