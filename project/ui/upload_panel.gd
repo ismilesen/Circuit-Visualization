@@ -5,7 +5,6 @@ extends Control
 @export var continuous_step: float = 1e-11
 @export var continuous_window: float = 2e-8
 @export var continuous_sleep_ms: int = 25
-@export var continuous_memory_enabled: bool = true
 @export var continuous_memory_signals: PackedStringArray = PackedStringArray()
 @export var continuous_memory_max_samples: int = 10000
 @export var continuous_memory_pop_count: int = 256
@@ -470,13 +469,12 @@ func _on_clear_pressed() -> void:
 func _configure_stream_output_if_enabled() -> void:
 	_using_memory_buffer = _configure_memory_buffer_if_enabled()
 	if not _using_memory_buffer:
-		_log("[color=yellow]RAM sample buffer disabled or unavailable.[/color]")
+		_set_error("RAM sample buffer configuration failed.")
 
 # Configures callback-driven sample buffering in native RAM.
 func _configure_memory_buffer_if_enabled() -> bool:
-	if not continuous_memory_enabled:
-		return false
 	if _sim == null or not _sim.has_method("configure_continuous_memory_buffer"):
+		_set_error("CircuitSimulator build does not expose configure_continuous_memory_buffer().")
 		return false
 
 	var max_samples: int = maxi(1, continuous_memory_max_samples)

@@ -393,7 +393,7 @@ CircuitSimulator::CircuitSimulator() {
     continuous_emit_stride = 64;
     buffer_stdout_stride = 10;
     callback_time_index.store(-1);
-    memory_buffer_enabled = false;
+    memory_buffer_enabled = true;
     memory_max_samples = 10000;
     instance = this;
 }
