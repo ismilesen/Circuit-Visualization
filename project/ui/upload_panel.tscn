@@ -25,13 +25,11 @@ theme_override_constants/separation = 12
 [node name="Header" type="Label" parent="Margin/VBox"]
 text = "Circuit Upload"
 theme_override_font_sizes/font_size = 40
-theme_override_colors/font_color = Color(1, 1, 1, 1)
 
 [node name="Subheader" type="Label" parent="Margin/VBox"]
-text = "Upload or drop your circuit files, we save copies in a safe ‘uploads’ folder, then (on Windows/macOS/Linux) we run ngspice to generate the data Godot will visualize."
+text = "Add circuit files here. Godot keeps copies in a safe uploads folder, then on Windows/macOS/Linux we can run ngspice to generate simulation data for the visualizer."
 autowrap_mode = 3
 theme_override_font_sizes/font_size = 13
-theme_override_colors/font_color = Color(1, 1, 1, 1)
 
 [node name="ControlsRow" type="HBoxContainer" parent="Margin/VBox"]
 size_flags_horizontal = 3
@@ -47,7 +45,15 @@ size_flags_horizontal = 3
 
 [node name="ClearButton" type="Button" parent="Margin/VBox/ControlsRow"]
 text = "Clear"
-size_flags_horizontal = 3
+size_flags_horizontal = 0
+
+[node name="SaveWorkspaceButton" type="Button" parent="Margin/VBox/ControlsRow"]
+text = "Save Workspace…"
+size_flags_horizontal = 0
+
+[node name="LoadWorkspaceButton" type="Button" parent="Margin/VBox/ControlsRow"]
+text = "Load Workspace…"
+size_flags_horizontal = 0
 
 [node name="DropZone" type="PanelContainer" parent="Margin/VBox"]
 custom_minimum_size = Vector2(0, 110)
@@ -72,7 +78,7 @@ text = "Drop files here"
 theme_override_font_sizes/font_size = 16
 
 [node name="DropHint" type="Label" parent="Margin/VBox/DropZone/DropZoneMargin/DropZoneVBox"]
-text = ".sch, .spice/.cir/.net, .txt. Native: drop from Explorer anywhere onto the window. Web: use Upload Files."
+text = ".sch, .spice/.cir/.net, .sym, .txt. Native: drop from Explorer onto the app window. Web: use Upload Files."
 autowrap_mode = 3
 theme_override_font_sizes/font_size = 12
 
@@ -81,18 +87,19 @@ size_flags_horizontal = 3
 size_flags_vertical = 3
 allow_reselect = true
 
-[node name="StatusRow" type="HBoxContainer" parent="Margin/VBox"]
+[node name="StatusBar" type="PanelContainer" parent="Margin/VBox"]
+size_flags_horizontal = 3
+
+[node name="StatusRow" type="HBoxContainer" parent="Margin/VBox/StatusBar"]
 theme_override_constants/separation = 6
 
-[node name="StatusPrefix" type="Label" parent="Margin/VBox/StatusRow"]
+[node name="StatusPrefix" type="Label" parent="Margin/VBox/StatusBar/StatusRow"]
 text = "Status:"
 theme_override_font_sizes/font_size = 12
-theme_override_colors/font_color = Color(1, 1, 1, 1)
 
-[node name="StatusValue" type="Label" parent="Margin/VBox/StatusRow"]
+[node name="StatusValue" type="Label" parent="Margin/VBox/StatusBar/StatusRow"]
 text = "idle"
 theme_override_font_sizes/font_size = 12
-theme_override_colors/font_color = Color(1, 0.65, 0.2, 1) # orange-ish default
 
 [node name="Output" type="RichTextLabel" parent="Margin/VBox"]
 size_flags_horizontal = 3
@@ -103,7 +110,18 @@ selection_enabled = true
 
 [node name="FileDialog" type="FileDialog" parent="."]
 access = 2
-file_mode = 4
+file_mode = 1
 use_native_dialog = true
 title = "Select circuit files"
-filters = PackedStringArray("*.spice, *.cir, *.net, *.txt ; Netlists", "*.sch ; Xschem schematics", "* ; All files")
+filters = PackedStringArray(
+    "*.spice, *.cir, *.net, *.txt ; Netlists",
+    "*.sch, *.sym ; Xschem schematics/symbols",
+    "* ; All files"
+)
+
+[node name="WorkspaceDialog" type="FileDialog" parent="."]
+access = 2
+file_mode = 0
+use_native_dialog = true
+title = "Workspace"
+filters = PackedStringArray("*.cvw.json ; Circuit Visualizer Workspace")
